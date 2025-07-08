@@ -5,11 +5,12 @@ import 'OpenStreetLocationPage.dart';
 import 'profile_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
+import 'parcel_location_page.dart';
+import 'car_trip_agreement_sheet.dart';
 import 'dart:convert';
 
 class RealHomePage extends StatefulWidget {
   const RealHomePage({super.key});
-  
 
   @override
   State<RealHomePage> createState() => _RealHomePageState();
@@ -17,10 +18,22 @@ class RealHomePage extends StatefulWidget {
 
 class _RealHomePageState extends State<RealHomePage>
     with TickerProviderStateMixin {
+  // Services shown on the main screen
   final services = [
     {'label': 'Bike', 'image': 'assets/images/bike.png'},
     {'label': 'Auto', 'image': 'assets/images/auto.png'},
     {'label': 'Car', 'image': 'assets/images/car.png'},
+    {'label': 'Parcel', 'image': 'assets/images/parcel.png'},
+  ];
+
+  // All services that should appear in the “View all” sheet
+  final allServices = [
+    {'label': 'Bike', 'image': 'assets/images/bike.png'},
+    {'label': 'Auto', 'image': 'assets/images/auto.png'},
+    {'label': 'Car', 'image': 'assets/images/car.png'},
+    {'label': 'Primer Car', 'image': 'assets/images/Primium.png'},
+    {'label': 'Car XL', 'image': 'assets/images/xl.png'},
+    {'label': 'Car Trip', 'image': 'assets/images/car_trip.png'},
     {'label': 'Parcel', 'image': 'assets/images/parcel.png'},
   ];
 
@@ -30,10 +43,10 @@ class _RealHomePageState extends State<RealHomePage>
   // ──────────────────  NEW: search + voice  ──────────────────
   final TextEditingController _searchController = TextEditingController();
   late final stt.SpeechToText _speech;
-  
+
   bool _isListening = false;
 
-String? selectedVehicle; // ✅ NEW: stores last tapped vehicle
+  String? selectedVehicle; // ✅ NEW: stores last tapped vehicle
 
   String name = '';
   String phone = '';
@@ -117,23 +130,116 @@ String? selectedVehicle; // ✅ NEW: stores last tapped vehicle
     });
   }
 
- void _openLocationPage(String destination) {
-  if (destination.isEmpty) return;
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) => OpenStreetLocationPage(
-  initialDrop: destination,
-  selectedVehicle: selectedVehicle, // ✅ Add this
-),
+  void _openLocationPage(String destination) {
+    if (destination.isEmpty) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => OpenStreetLocationPage(
+          initialDrop: destination,
+          selectedVehicle: selectedVehicle, // ✅ Add this
+        ),
+      ),
+    ).then((_) => _fetchUserProfile());
+    _searchController.clear();
+  }
 
-    ),
-  ).then((_) => _fetchUserProfile());
-  _searchController.clear();
-}
+  /// Shows the modal bottom sheet with all services
+  void _showAllServices() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return SizedBox(
+          height: 420,
+          child: Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 12, bottom: 8),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Text('All Services',
+                  style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Expanded(
+                child: GridView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: allServices.length,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    mainAxisSpacing: 16,
+                    crossAxisSpacing: 16,
+                    childAspectRatio: 0.8,
+                  ),
+                  itemBuilder: (ctx, idx) {
+                    final data = allServices[idx];
+                    return GestureDetector(
+                      onTap: () {
+                        Navigator.pop(ctx);
 
+                        if (data['label'] == 'Parcel') {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const ParcelLocationPage()),
+                          ).then((_) => _fetchUserProfile());
 
+                        } else if (data['label'] == 'Car Trip') {
+                          showModalBottomSheet(
+                            context: ctx,
+                            isScrollControlled: true,
+                            backgroundColor: Colors.white,
+                            shape: const RoundedRectangleBorder(
+                              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                            ),
+                            builder: (_) => const CarTripAgreementSheet(),
+                          ).then((_) => _fetchUserProfile());
 
+                        } else {
+                          selectedVehicle = data['label'];
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => OpenStreetLocationPage(selectedVehicle: data['label']),
+                            ),
+                          ).then((_) => _fetchUserProfile());
+                        }
+                      },
+                      child: Column(
+                        children: [
+                          Expanded(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF5F5F5),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              padding: const EdgeInsets.all(12),
+                              child: Image.asset(data['image']!, fit: BoxFit.contain),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(data['label']!,
+                              textAlign: TextAlign.center,
+                              style: GoogleFonts.roboto(fontSize: 14, fontWeight: FontWeight.w600)),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   @override
   void dispose() {
@@ -151,7 +257,7 @@ String? selectedVehicle; // ✅ NEW: stores last tapped vehicle
     final halfWidth = screenWidth / 2;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0D1B2A),
+      backgroundColor: Colors.white,
       drawer: _buildDrawer(context),
       body: SafeArea(
         child: Column(
@@ -219,8 +325,11 @@ String? selectedVehicle; // ✅ NEW: stores last tapped vehicle
                 children: [
                   Text("Explore",
                       style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white)),
-                  Text("View all",
-                      style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.yellow)),
+                  InkWell(
+                    onTap: _showAllServices, // ✅ Open modal bottom sheet
+                    child: Text("View all",
+                        style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.yellow)),
+                  ),
                 ],
               ),
             ),
@@ -278,18 +387,34 @@ String? selectedVehicle; // ✅ NEW: stores last tapped vehicle
   Widget _buildHalfCard(String label, String imagePath, double width, bool fromLeft, BuildContext ctx) {
     const double cardHeight = 55;
     return GestureDetector(
-     onTap: () {
-        selectedVehicle = label;
-  Navigator.push(
-    ctx,
-    MaterialPageRoute(
-      builder: (_) => OpenStreetLocationPage(
-        selectedVehicle: label, // Pass selected vehicle
-      ),
-    ),
-  ).then((_) => _fetchUserProfile());
-},
+      onTap: () {
+        if (label == 'Parcel') {
+          Navigator.push(
+            ctx,
+            MaterialPageRoute(builder: (_) => const ParcelLocationPage()),
+          ).then((_) => _fetchUserProfile());
 
+        } else if (label == 'Car Trip') {
+          showModalBottomSheet(
+            context: ctx,
+            isScrollControlled: true,
+            backgroundColor: Colors.white,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            builder: (_) => const CarTripAgreementSheet(),
+          ).then((_) => _fetchUserProfile());
+
+        } else {
+          selectedVehicle = label;
+          Navigator.push(
+            ctx,
+            MaterialPageRoute(
+              builder: (_) => OpenStreetLocationPage(selectedVehicle: label),
+            ),
+          ).then((_) => _fetchUserProfile());
+        }
+      },
       child: Stack(
         clipBehavior: Clip.none,
         children: [

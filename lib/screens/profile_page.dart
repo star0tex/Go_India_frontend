@@ -51,7 +51,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _updateProfile() async {
-    final url = Uri.parse('http://192.168.75.12:5002/api/profile/$phone');
+    final url = Uri.parse('http://192.168.43.236:5002/api/profile/$phone');
     final res = await http.put(
       url,
       headers: {'Content-Type': 'application/json'},

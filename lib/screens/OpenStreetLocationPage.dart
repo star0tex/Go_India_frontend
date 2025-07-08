@@ -36,8 +36,8 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
   static const _historyKey = 'location_history';
   List<String> _history = [];
 
-  final String apiBase = 'http://192.168.43.236:5002';
-  final List<String> vehicles = ['Bike', 'Auto', 'Car','prime','parcel'];
+  final String apiBase = 'http://192.168.43.236:5002/api/fares/calc';
+  final List<String> vehicles = ['bike', 'Auto', 'Car','Premium Car','Parcel','Car XL'];
   final Map<String, double> _vehicleFares = {};
   // ignore: unused_field
   bool _loadingFares = false;
@@ -221,7 +221,7 @@ Future<void> _bootstrap() async {
     for (final v in vehicles) {
       try {
         final res = await http.post(
-          Uri.parse('$apiBase/api/fares/calculate'),
+          Uri.parse('$apiBase/api/fares/calc'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'state': 'telangana',
@@ -443,9 +443,10 @@ Widget _bottomPanel() {
     if (v == 'Bike') asset = 'assets/images/bike.png';
     if (v == 'Auto') asset = 'assets/images/auto.png';
     if (v == 'Car') asset = 'assets/images/car.png';
-    if (v == 'prime') asset = 'assets/images/charminar_white.png';
-    if (v == 'parcel') asset = 'assets/images/parcel.png';
-
+    if (v == 'Primer Car') asset = 'assets/images/Primium.png';
+    if (v == 'Car XL') asset = 'assets/images/Primium.png';
+    if (v == 'Parcel') asset = 'assets/images/parcel.png';
+    if (v == 'Car Trip') asset = 'assets/images/Primium.png';
     return GestureDetector(
       onTap: () {
         setState(() {

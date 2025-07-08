@@ -50,6 +50,11 @@
     <key>NSMicrophoneUsageDescription</key>
     <string>Need microphone access for voice search.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-<string>We use your location to show nearby places</string>
+    <string>We use your location to show nearby places</string>
+    <key>NSCameraUsageDescription</key>
+	<string>Need camera to take parcel photo</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Need gallery access to choose parcel photo</string>
+
 </dict>
 </plist>
