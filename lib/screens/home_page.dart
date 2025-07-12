@@ -25,7 +25,7 @@ class _HomePageState extends State<HomePage> {
     if (_isSaving) return; // debounce
     setState(() => _isSaving = true);
 
-    const String apiUrl = 'http://192.168.43.236:5002/api/profile';
+    const String apiUrl = 'http://192.168.174.12:5002/api/profile';
 
     try {
       final response = await http.post(

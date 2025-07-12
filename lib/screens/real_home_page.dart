@@ -31,8 +31,8 @@ class _RealHomePageState extends State<RealHomePage>
     {'label': 'Bike', 'image': 'assets/images/bike.png'},
     {'label': 'Auto', 'image': 'assets/images/auto.png'},
     {'label': 'Car', 'image': 'assets/images/car.png'},
-    {'label': 'Primer Car', 'image': 'assets/images/Primium.png'},
-    {'label': 'Car XL', 'image': 'assets/images/xl.png'},
+    {'label': 'premium', 'image': 'assets/images/Primium.png'},
+    {'label': 'XL', 'image': 'assets/images/xl.png'},
     {'label': 'Car Trip', 'image': 'assets/images/car_trip.png'},
     {'label': 'Parcel', 'image': 'assets/images/parcel.png'},
   ];
@@ -91,7 +91,7 @@ class _RealHomePageState extends State<RealHomePage>
 
   Future<void> _fetchUserProfile() async {
     try {
-      final res = await http.get(Uri.parse('http://192.168.43.236:5002/api/profile/$phone'));
+      final res = await http.get(Uri.parse('http://192.168.174.12:5002/api/profile/$phone'));
       if (res.statusCode == 200) {
         final user = json.decode(res.body)['user'];
         setState(() {
@@ -188,7 +188,7 @@ class _RealHomePageState extends State<RealHomePage>
                         if (data['label'] == 'Parcel') {
                           Navigator.push(
                             context,
-                            MaterialPageRoute(builder: (_) => const ParcelLocationPage()),
+                            MaterialPageRoute(builder: (_) => ParcelLocationPage()),
                           ).then((_) => _fetchUserProfile());
 
                         } else if (data['label'] == 'Car Trip') {
@@ -391,7 +391,7 @@ class _RealHomePageState extends State<RealHomePage>
         if (label == 'Parcel') {
           Navigator.push(
             ctx,
-            MaterialPageRoute(builder: (_) => const ParcelLocationPage()),
+            MaterialPageRoute(builder: (_) => ParcelLocationPage()),
           ).then((_) => _fetchUserProfile());
 
         } else if (label == 'Car Trip') {
@@ -406,11 +406,11 @@ class _RealHomePageState extends State<RealHomePage>
           ).then((_) => _fetchUserProfile());
 
         } else {
-          selectedVehicle = label;
+          selectedVehicle = label.toLowerCase();
           Navigator.push(
             ctx,
             MaterialPageRoute(
-              builder: (_) => OpenStreetLocationPage(selectedVehicle: label),
+              builder: (_) => OpenStreetLocationPage(selectedVehicle: selectedVehicle),
             ),
           ).then((_) => _fetchUserProfile());
         }

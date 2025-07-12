@@ -55,6 +55,8 @@
 	<string>Need camera to take parcel photo</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Need gallery access to choose parcel photo</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app needs your location to set the pickup point.</string>
 
 </dict>
 </plist>

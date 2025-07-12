@@ -30,8 +30,8 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
   LatLng mapCenter = const LatLng(20.5937, 78.9629);
 
   /*  Trip state  */
-  static const vehicles = ['Car', 'Premium', 'XL'];
-  String selectedVehicle = 'Car';
+  static const vehicles = ['car', 'premium', 'xl'];
+  String selectedVehicle = 'car';
   bool   _oneWay         = false;
   double? _distanceKm, _durationMin;
 
@@ -91,8 +91,8 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
     final uri  = Uri.parse(
       'https://router.project-osrm.org/route/v1/driving/'
       '$start;$end?overview=full&geometries=geojson');
+    
     final res = await http.get(uri);
-
     if (res.statusCode==200) {
       final data   = jsonDecode(res.body);
       final coords = data['routes'][0]['geometry']['coordinates'] as List;
@@ -107,16 +107,20 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
     _fitBounds();
   }
 
-  void _fitBounds(){
+  void _fitBounds() {
     if (routePts.isEmpty) return;
     final bounds = LatLngBounds.fromPoints(routePts);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      mapCtl.fitBounds(bounds,
-        options: const FitBoundsOptions(padding: EdgeInsets.all(80), maxZoom: 17));
+      mapCtl.fitCamera(
+        CameraFit.bounds(
+          bounds: bounds,
+          padding: const EdgeInsets.all(80),
+          maxZoom: 17,
+        ),
+      );
     });
   }
-
   /* ─────────────  Fare fetch & sheet  ───────────── */
   Future<void> _fetchAndShowFare(String vehicle) async {
     if (_distanceKm==null || _durationMin==null) {
@@ -127,7 +131,7 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
 
     setState(()=>_loadingFare=true);
     try {
-      final uri = Uri.parse('http://192.168.43.236:5002/api/fares/calc');
+      final uri = Uri.parse('http://192.168.174.12:5002/api/fares/calc');
       final body = {
         'state'      : 'telangana',
         'city'       : 'hyderabad',
@@ -315,39 +319,54 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
     ),
   );
 
-  Widget _map() => Expanded(
-    child: Stack(
-      children:[
-        FlutterMap(
-          mapController: mapCtl,
-          options: MapOptions(center: mapCenter, zoom: 15, maxZoom: 19),
-          children:[
-            TileLayer(
-              urlTemplate:'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-              userAgentPackageName:'com.goindia.app',
+   Widget _map() => Expanded(
+        child: Stack(
+          children: [
+            FlutterMap(
+              mapController: mapCtl,
+              options: MapOptions(
+                initialCenter: mapCenter,   // ← new names
+                initialZoom:   15,
+                maxZoom:       19,
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.goindia.app',
+                ),
+                if (pickup != null)
+                  MarkerLayer(markers: [
+                    Marker(
+                        point: pickup!,
+                        width: 28,
+                        height: 28,
+                        child: const Icon(Icons.location_on,
+                            color: Colors.green)),
+                  ]),
+                if (drop != null)
+                  MarkerLayer(markers: [
+                    Marker(
+                        point: drop!,
+                        width: 28,
+                        height: 28,
+                        child:
+                            const Icon(Icons.flag, color: Colors.red)),
+                  ]),
+                if (routePts.isNotEmpty)
+                  PolylineLayer(polylines: [
+                    Polyline(
+                        points: routePts,
+                        strokeWidth: 4,
+                        color: Colors.blue),
+                  ]),
+              ],
             ),
-            if(pickup!=null)
-              MarkerLayer(markers:[
-                Marker(point:pickup!,width:28,height:28,
-                  child:const Icon(Icons.location_on,color:Colors.green)),
-              ]),
-            if(drop!=null)
-              MarkerLayer(markers:[
-                Marker(point:drop!,width:28,height:28,
-                  child:const Icon(Icons.flag,color:Colors.red)),
-              ]),
-            if(routePts.isNotEmpty)
-              PolylineLayer(polylines:[
-                Polyline(points:routePts,strokeWidth:4,color:Colors.blue),
-              ]),
+            if (_routing)
+              const Positioned.fill(
+                  child: Center(child: CircularProgressIndicator())),
           ],
         ),
-        if (_routing)
-          const Positioned.fill(child: Center(child:CircularProgressIndicator())),
-      ],
-    ),
-  );
-
+      );
   Widget _vehicleRow() => Container(
     padding: const EdgeInsets.symmetric(horizontal:16,vertical:12),
     color: Colors.white,
@@ -355,7 +374,7 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
       mainAxisAlignment: MainAxisAlignment.spaceAround,
       children: vehicles.map((v){
         final sel = v==selectedVehicle;
-        String asset = v=='XL'
+        String asset = v=='xl'
             ? 'assets/images/xl.png'
             : v=='Premium'
               ? 'assets/images/Primium.png'

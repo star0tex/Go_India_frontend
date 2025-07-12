@@ -9,7 +9,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class OpenStreetLocationPage extends StatefulWidget {
-  const OpenStreetLocationPage({super.key, this.initialDrop = '',this.selectedVehicle});
+  const OpenStreetLocationPage({super.key, this.initialDrop = '', this.selectedVehicle});
   final String initialDrop;
   final String? selectedVehicle;
 
@@ -36,12 +36,13 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
   static const _historyKey = 'location_history';
   List<String> _history = [];
 
-  final String apiBase = 'http://192.168.43.236:5002/api/fares/calc';
-  final List<String> vehicles = ['bike', 'Auto', 'Car','Premium Car','Parcel','Car XL'];
+  final String apiBase = 'http://192.168.174.12:5002';
+  final List<String> vehicles = ['bike', 'auto', 'car', 'premium', 'xl'];
   final Map<String, double> _vehicleFares = {};
-  // ignore: unused_field
   bool _loadingFares = false;
-String? selectedVehicle;
+  String? selectedVehicle;
+  String _pickupState = '';
+  String _pickupCity = '';
 
   @override
   void initState() {
@@ -50,31 +51,26 @@ String? selectedVehicle;
     selectedVehicle = widget.selectedVehicle;
     _bootstrap();
   }
-Future<void> _bootstrap() async {
-  await _setCurrentLocation();
-  await _loadHistory();
-  await _clearBadHistory();
 
-  // If user came from search bar
-  if (widget.initialDrop.isNotEmpty) {
-    dropController.text = widget.initialDrop;
+  Future<void> _bootstrap() async {
+    await _setCurrentLocation();
+    await _loadHistory();
+    await _clearBadHistory();
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _searchLocation(widget.initialDrop, isPickup: false);
-      
-      // If user came from search bar, show all fares
-      setState(() {
-        selectedVehicle = null; // 🔁 Show ALL vehicles
+    if (widget.initialDrop.isNotEmpty) {
+      dropController.text = widget.initialDrop;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _searchLocation(widget.initialDrop, isPickup: false);
+        setState(() {
+          selectedVehicle = null;
+        });
       });
-    });
-  } else if (widget.selectedVehicle != null) {
-    // If user came from vehicle tap, show only that vehicle fare
-    setState(() {
-      selectedVehicle = widget.selectedVehicle;
-    });
+    } else if (widget.selectedVehicle != null) {
+      setState(() {
+        selectedVehicle = widget.selectedVehicle;
+      });
+    }
   }
-}
-
 
   @override
   void dispose() {
@@ -91,21 +87,21 @@ Future<void> _bootstrap() async {
     if (perm == LocationPermission.denied) {
       perm = await Geolocator.requestPermission();
     }
-    if (perm == LocationPermission.denied ||
-        perm == LocationPermission.deniedForever) {
+    if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
       return;
     }
 
     try {
-      final pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
+      final pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
       final current = LatLng(pos.latitude, pos.longitude);
-      final name = await _reverseGeocode(current);
+      final locData = await _reverseGeocode(current);
 
       setState(() {
         pickupPoint = current;
         mapCenter = current;
-        pickupController.text = name;
+        pickupController.text = locData['displayName']!;
+        _pickupState = locData['state']!;
+        _pickupCity = locData['city']!;
         _markers.add(_buildMarker(current, isPickup: true));
       });
 
@@ -117,12 +113,20 @@ Future<void> _bootstrap() async {
     }
   }
 
-  Future<String> _reverseGeocode(LatLng latLng) async {
-    final url = Uri.parse(
-        'https://nominatim.openstreetmap.org/reverse?lat=${latLng.latitude}&lon=${latLng.longitude}&format=json');
+  Future<Map<String, String>> _reverseGeocode(LatLng latLng) async {
+    final url = Uri.parse('https://nominatim.openstreetmap.org/reverse?lat=${latLng.latitude}&lon=${latLng.longitude}&format=json&addressdetails=1');
     final res = await http.get(url, headers: const {'User-Agent': 'FlutterApp'});
-    if (res.statusCode != 200) return 'Current Location';
-    return (jsonDecode(res.body) as Map)["display_name"] ?? 'Current Location';
+    if (res.statusCode != 200) {
+      return {'displayName': 'Current Location', 'state': '', 'city': ''};
+    }
+
+    final data = jsonDecode(res.body);
+    final address = data['address'] ?? {};
+    return {
+      'displayName': data['display_name'] ?? 'Current Location',
+      'state': address['state'] ?? '',
+      'city': address['city'] ?? address['town'] ?? address['village'] ?? '',
+    };
   }
 
   void _searchLocation(String query, {required bool isPickup}) async {
@@ -130,6 +134,8 @@ Future<void> _bootstrap() async {
     final loc = await NominatimHelper.search(query.trim());
     if (loc == null) return;
     final point = LatLng(loc.latitude, loc.longitude);
+
+    final locData = await _reverseGeocode(point);
 
     setState(() {
       mapCenter = point;
@@ -141,6 +147,9 @@ Future<void> _bootstrap() async {
 
       if (isPickup) {
         pickupPoint = point;
+        _pickupState = locData['state']!;
+        _pickupCity = locData['city']!;
+        pickupController.text = locData['displayName']!;
       } else {
         dropPoint = point;
       }
@@ -173,8 +182,7 @@ Future<void> _bootstrap() async {
     final start = '${pickupPoint!.longitude},${pickupPoint!.latitude}';
     final end = '${dropPoint!.longitude},${dropPoint!.latitude}';
 
-    final url = Uri.parse(
-        'https://routing.openstreetmap.de/routed-bike/route/v1/driving/$start;$end?overview=full&geometries=geojson');
+    final url = Uri.parse('https://routing.openstreetmap.de/routed-bike/route/v1/driving/$start;$end?overview=full&geometries=geojson');
     final res = await http.get(url);
     if (res.statusCode != 200) return;
 
@@ -182,21 +190,26 @@ Future<void> _bootstrap() async {
     final coords = data['routes'][0]['geometry']['coordinates'] as List;
     final distance = (data['routes'][0]['distance'] as num).toDouble() / 1000.0;
     final duration = (data['routes'][0]['duration'] as num).toDouble();
+     
+    debugPrint('➡️ Drawing route...');
+    debugPrint('Pickup Point: $pickupPoint');
+    debugPrint('Drop Point: $dropPoint');
+    debugPrint('API Response Status: ${res.statusCode}');
+    debugPrint('API Response Body: ${res.body}');
 
     setState(() {
-      _routePoints
-        ..clear()
-        ..addAll(coords.map<LatLng>((c) => LatLng(c[1], c[0])));
+      _routePoints..clear()..addAll(coords.map<LatLng>((c) => LatLng(c[1], c[0])));
       _distanceKm = distance;
       _durationSec = duration;
     });
 
-    _fetchFares();
+    await _fetchFares();
     _fitMapToBounds();
   }
 
   void _fitMapToBounds() {
     if (pickupPoint == null || dropPoint == null) return;
+
     final sw = LatLng(
       [pickupPoint!.latitude, dropPoint!.latitude].reduce((a, b) => a < b ? a : b),
       [pickupPoint!.longitude, dropPoint!.longitude].reduce((a, b) => a < b ? a : b),
@@ -205,14 +218,22 @@ Future<void> _bootstrap() async {
       [pickupPoint!.latitude, dropPoint!.latitude].reduce((a, b) => a > b ? a : b),
       [pickupPoint!.longitude, dropPoint!.longitude].reduce((a, b) => a > b ? a : b),
     );
-    _mapController.fitBounds(
-      LatLngBounds(sw, ne),
-      options: const FitBoundsOptions(padding: EdgeInsets.all(80)),
+
+    _mapController.fitCamera(
+      CameraFit.bounds(
+        bounds: LatLngBounds(sw, ne),
+        padding: const EdgeInsets.all(80),
+      ),
     );
   }
 
   Future<void> _fetchFares() async {
     if (_distanceKm == null || _durationSec == null) return;
+    if (_pickupState.isEmpty || _pickupCity.isEmpty) {
+      debugPrint('⚠️ Skipping fare fetch: missing state or city');
+      return;
+    }
+
     setState(() {
       _vehicleFares.clear();
       _loadingFares = true;
@@ -224,13 +245,19 @@ Future<void> _bootstrap() async {
           Uri.parse('$apiBase/api/fares/calc'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
-            'state': 'telangana',
-            'city': 'hyderabad',
+            'state': _pickupState,
+            'city': _pickupCity,
             'vehicleType': v,
+            'category': 'short',
             'distanceKm': _distanceKm,
             'durationMin': _durationSec! / 60.0,
           }),
         );
+          // ➕ ADD THIS
+        debugPrint('🚕 Fetching fare for: $v');
+        debugPrint('Request: state=$_pickupState, city=$_pickupCity, distance=$_distanceKm, duration=${_durationSec! / 60.0}');
+        debugPrint('Response Status: ${res.statusCode}');
+        debugPrint('Response Body: ${res.body}');
         if (res.statusCode == 200) {
           final total = (jsonDecode(res.body)['total'] as num).toDouble();
           setState(() => _vehicleFares[v] = total);
@@ -241,7 +268,6 @@ Future<void> _bootstrap() async {
     }
     setState(() => _loadingFares = false);
   }
-
   Future<void> _loadHistory() async {
     final sp = await SharedPreferences.getInstance();
     _history = sp.getStringList(_historyKey) ?? [];
@@ -437,30 +463,31 @@ Widget _bottomPanel() {
           scrollDirection: Axis.horizontal,
           child: Row(
   children: vehicles.where((v) {
-    return selectedVehicle == null || selectedVehicle == v;
-  }).map((v) {
-    String asset = 'assets/images/$v.png';
-    if (v == 'Bike') asset = 'assets/images/bike.png';
-    if (v == 'Auto') asset = 'assets/images/auto.png';
-    if (v == 'Car') asset = 'assets/images/car.png';
-    if (v == 'Primer Car') asset = 'assets/images/Primium.png';
-    if (v == 'Car XL') asset = 'assets/images/Primium.png';
-    if (v == 'Parcel') asset = 'assets/images/parcel.png';
-    if (v == 'Car Trip') asset = 'assets/images/Primium.png';
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          selectedVehicle = v;
-        });
-      },
-      child: _fareCard(
-        v,
-        asset,
-        _vehicleFares[v],
-        labelBelow: v == 'Bike' ? 'Quick Bike' : null,
-      ),
-    );
-  }).toList(),
+  return selectedVehicle == null || selectedVehicle!.toLowerCase() == v.toLowerCase();
+}).map((v) {
+  if (!_vehicleFares.containsKey(v)) return SizedBox(); // 🔴 Filter out if fare not loaded
+
+  String asset = 'assets/images/${v.toLowerCase()}.png';
+  if (v == 'bike') asset = 'assets/images/bike.png';
+  if (v == 'auto') asset = 'assets/images/auto.png';
+  if (v == 'car') asset = 'assets/images/car.png';
+  if (v == 'premium') asset = 'assets/images/Primium.png';
+  if (v == 'xl') asset = 'assets/images/xl.png';
+
+  return GestureDetector(
+    onTap: () {
+      setState(() {
+        selectedVehicle = v;
+      });
+    },
+    child: _fareCard(
+      v,
+      asset,
+      _vehicleFares[v],
+      labelBelow: v == 'bike' ? 'Quick bike' : null,
+    ),
+  );
+}).toList(),
 )
 
         ),
@@ -507,20 +534,25 @@ Widget _bottomPanel() {
       body: Stack(
         children: [
           FlutterMap(
-  mapController: _mapController,
-  options: MapOptions(center: mapCenter, zoom: 15, maxZoom: 19),
-  children: [
-    TileLayer(
-      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-      userAgentPackageName: 'com.example.app',
-    ),
-    MarkerLayer(markers: _markers),
-    if (_routePoints.isNotEmpty)
-      PolylineLayer(polylines: [
-        Polyline(points: _routePoints, strokeWidth: 4, color: Colors.blue),
-      ]),
-  ],
-),
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: mapCenter,   // ← new name
+              initialZoom:   15,          // ← new name
+              maxZoom:       19,
+            ),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.example.app',
+              ),
+              MarkerLayer(markers: _markers),
+              if (_routePoints.isNotEmpty)
+                PolylineLayer(polylines: [
+                  Polyline(points: _routePoints, strokeWidth: 4, color: Colors.blue),
+                ]),
+            ],
+          ),
+
               Positioned(
       top: 40,
       left: 20,
@@ -559,17 +591,18 @@ Widget _fareCard(String label, String assetPath, double? fare, {String? labelBel
     mainAxisSize: MainAxisSize.min,
     children: [
       Container(
-        width: 300,
+        width: 150,
+        height: 150,
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
           color: Colors.grey[200],
           borderRadius: BorderRadius.circular(20),
         ),
-        child: Image.asset(assetPath, height: 150, width: 150),
+        child: Image.asset(assetPath, fit: BoxFit.contain),
       ),
       const SizedBox(height: 8),
       Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
-      Text(fare != null ? '₹${fare.toStringAsFixed(0)}' : '₹--'),
+      Text(fare != null ? '₹${fare.toStringAsFixed(0)}' : 'Loading...'),
       if (labelBelow != null)
         Text(labelBelow, style: const TextStyle(fontSize: 10, color: Colors.blue)),
     ],

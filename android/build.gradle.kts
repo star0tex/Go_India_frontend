@@ -1,3 +1,4 @@
+extra["minSdkVersion"] = 23 
 allprojects {
     repositories {
         google()
@@ -15,6 +16,7 @@ subprojects {
         sourceCompatibility = "17"
         targetCompatibility = "17"
         options.compilerArgs.add("-Xlint:-options")
+        options.compilerArgs.add("-Xlint:deprecation")
      }
 }
 

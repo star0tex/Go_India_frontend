@@ -26,7 +26,7 @@ class _LoginPageState extends State<LoginPage> {
   /* ───────────────────────── Helpers ───────────────────────── */
   Future<bool> _checkUserExists(String phoneNo) async {
     try {
-      final res = await http.get(Uri.parse('http://192.168.43.236:5002/api/profile/$phoneNo'));
+      final res = await http.get(Uri.parse('http://192.168.174.12:5002/api/profile/$phoneNo'));
       if (res.statusCode == 200) {
         final data = json.decode(res.body);
         return data['user'] != null;

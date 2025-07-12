@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'screens/real_home_page.dart';
+import 'screens/splash_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,7 +20,7 @@ class IndianRideApp extends StatelessWidget {
         primarySwatch: Colors.amber,
         useMaterial3: true,
       ),
-      home: const RealHomePage(), // ✅ Load Splash first
+      home: const SplashScreen(), // ✅ Load Splash first
     );
   }
 }
