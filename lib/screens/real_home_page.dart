@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'parcel_location_page.dart';
 import 'car_trip_agreement_sheet.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 
 class RealHomePage extends StatefulWidget {
@@ -16,9 +17,7 @@ class RealHomePage extends StatefulWidget {
   State<RealHomePage> createState() => _RealHomePageState();
 }
 
-class _RealHomePageState extends State<RealHomePage>
-    with TickerProviderStateMixin {
-  // Services shown on the main screen
+class _RealHomePageState extends State<RealHomePage> with TickerProviderStateMixin {
   final services = [
     {'label': 'Bike', 'image': 'assets/images/bike.png'},
     {'label': 'Auto', 'image': 'assets/images/auto.png'},
@@ -26,7 +25,6 @@ class _RealHomePageState extends State<RealHomePage>
     {'label': 'Parcel', 'image': 'assets/images/parcel.png'},
   ];
 
-  // All services that should appear in the “View all” sheet
   final allServices = [
     {'label': 'Bike', 'image': 'assets/images/bike.png'},
     {'label': 'Auto', 'image': 'assets/images/auto.png'},
@@ -39,25 +37,19 @@ class _RealHomePageState extends State<RealHomePage>
 
   late List<AnimationController> _controllers;
   late List<Animation<Offset>> _animations;
-
-  // ──────────────────  NEW: search + voice  ──────────────────
   final TextEditingController _searchController = TextEditingController();
   late final stt.SpeechToText _speech;
-
   bool _isListening = false;
-
-  String? selectedVehicle; // ✅ NEW: stores last tapped vehicle
-
+  String? selectedVehicle;
   String name = '';
   String phone = '';
   String rating = '';
+  List<String> locationHistory = [];
 
   @override
   void initState() {
     super.initState();
-
     _speech = stt.SpeechToText();
-
     _controllers = List.generate(
       services.length,
       (i) => AnimationController(
@@ -65,7 +57,6 @@ class _RealHomePageState extends State<RealHomePage>
         duration: const Duration(milliseconds: 800),
       ),
     );
-
     _animations = List.generate(
       services.length,
       (i) {
@@ -73,13 +64,9 @@ class _RealHomePageState extends State<RealHomePage>
         return Tween<Offset>(
           begin: Offset(fromLeft ? -1.5 : 1.5, 0),
           end: Offset.zero,
-        ).animate(CurvedAnimation(
-          parent: _controllers[i],
-          curve: Curves.easeOut,
-        ));
+        ).animate(CurvedAnimation(parent: _controllers[i], curve: Curves.easeOut));
       },
     );
-
     Future.forEach<int>(List.generate(services.length, (i) => i), (i) async {
       await Future.delayed(Duration(milliseconds: i * 300));
       _controllers[i].forward();
@@ -87,24 +74,54 @@ class _RealHomePageState extends State<RealHomePage>
 
     phone = FirebaseAuth.instance.currentUser?.phoneNumber?.replaceAll('+91', '') ?? '';
     _fetchUserProfile();
+    _loadLocationHistory();
   }
 
   Future<void> _fetchUserProfile() async {
     try {
-      final res = await http.get(Uri.parse('http://192.168.174.12:5002/api/profile/$phone'));
+      final res = await http.get(Uri.parse('http://192.168.103.12:5002/api/user/$phone'));
       if (res.statusCode == 200) {
         final user = json.decode(res.body)['user'];
         setState(() {
           name = user['name'] ?? '';
           phone = user['phone'] ?? phone;
         });
+        _loadLocationHistory(); // 👈 reload with updated phone
       }
     } catch (e) {
       debugPrint("Failed to fetch profile: $e");
     }
   }
 
-  // ──────────────────  NEW: voice helpers  ──────────────────
+  Future<void> _loadLocationHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'location_history_${phone.isNotEmpty ? phone : 'unknown'}';
+    setState(() {
+      locationHistory = prefs.getStringList(key) ?? [];
+    });
+  }
+
+  Future<void> _addToHistory(String destination) async {
+    const allowedVehicles = ['bike', 'auto', 'car', 'premium', 'xl'];
+    final vehicle = selectedVehicle?.toLowerCase().trim();
+    if (vehicle == null || !allowedVehicles.contains(vehicle)) {
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'location_history_${phone.isNotEmpty ? phone : 'unknown'}';
+
+    locationHistory.remove(destination);
+    locationHistory.insert(0, destination);
+    if (locationHistory.length > 10) {
+      locationHistory = locationHistory.sublist(0, 10);
+    }
+
+    await prefs.setStringList(key, locationHistory);
+    setState(() {});
+  }
+
+
   Future<void> _toggleListening() async {
     if (_isListening) {
       await _speech.stop();
@@ -130,28 +147,39 @@ class _RealHomePageState extends State<RealHomePage>
     });
   }
 
-  void _openLocationPage(String destination) {
-    if (destination.isEmpty) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => OpenStreetLocationPage(
-          initialDrop: destination,
-          selectedVehicle: selectedVehicle, // ✅ Add this
-        ),
-      ),
-    ).then((_) => _fetchUserProfile());
-    _searchController.clear();
+void _openLocationPage(String destination) {
+  if (destination.isEmpty) return;
+
+  const allowedTypes = ['bike', 'auto', 'car', 'premium', 'xl'];
+  final vehicle = selectedVehicle?.toLowerCase().trim();
+
+  // Fallback to "bike" if no vehicle selected or vehicle not allowed
+  final effectiveVehicle = allowedTypes.contains(vehicle) ? vehicle : 'bike';
+  selectedVehicle = effectiveVehicle; // update it globally
+
+  // Save to history only for allowed vehicles
+  if (allowedTypes.contains(effectiveVehicle)) {
+    _addToHistory(destination);
   }
 
-  /// Shows the modal bottom sheet with all services
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => OpenStreetLocationPage(
+        initialDrop: destination,
+        selectedVehicle: effectiveVehicle,
+      ),
+    ),
+  ).then((_) => _fetchUserProfile());
+
+  _searchController.clear();
+}
+
   void _showAllServices() {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) {
         return SizedBox(
           height: 420,
@@ -161,13 +189,9 @@ class _RealHomePageState extends State<RealHomePage>
                 margin: const EdgeInsets.only(top: 12, bottom: 8),
                 width: 40,
                 height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
+                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
               ),
-              Text('All Services',
-                  style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600)),
+              Text('All Services', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
               Expanded(
                 child: GridView.builder(
@@ -184,13 +208,9 @@ class _RealHomePageState extends State<RealHomePage>
                     return GestureDetector(
                       onTap: () {
                         Navigator.pop(ctx);
-
                         if (data['label'] == 'Parcel') {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => ParcelLocationPage()),
-                          ).then((_) => _fetchUserProfile());
-
+                          Navigator.push(context, MaterialPageRoute(builder: (_) => ParcelLocationPage()))
+                              .then((_) => _fetchUserProfile());
                         } else if (data['label'] == 'Car Trip') {
                           showModalBottomSheet(
                             context: ctx,
@@ -201,7 +221,6 @@ class _RealHomePageState extends State<RealHomePage>
                             ),
                             builder: (_) => const CarTripAgreementSheet(),
                           ).then((_) => _fetchUserProfile());
-
                         } else {
                           selectedVehicle = data['label'];
                           Navigator.push(
@@ -257,143 +276,200 @@ class _RealHomePageState extends State<RealHomePage>
     final halfWidth = screenWidth / 2;
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Colors.transparent,
       drawer: _buildDrawer(context),
-      body: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ──────────────────  MENU + SEARCH BAR  ──────────────────
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Builder(
-                    builder: (ctx) => IconButton(
-                      icon: const Icon(Icons.menu, color: Colors.white, size: 28),
-                      onPressed: () {
-                        Scaffold.of(ctx).openDrawer();
-                        _fetchUserProfile();
-                      },
-                    ),
+      body: Container(
+        color: Colors.white,
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: const BoxDecoration(
+                  color: Color.fromARGB(255, 98, 205, 255),
+                  borderRadius: BorderRadius.only(
+                    bottomLeft: Radius.circular(24),
+                    bottomRight: Radius.circular(24),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Container(
-                      height: 48,
+                ),
+                child: Row(
+                  children: [
+                    Container(
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(30),
+                        borderRadius: BorderRadius.circular(12),
                         boxShadow: const [
-                          BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 3)),
+                          BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2)),
                         ],
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Builder(
+                        builder: (ctx) => IconButton(
+                          icon: const Icon(Icons.menu, color: Colors.black, size: 28),
+                          onPressed: () {
+                            Scaffold.of(ctx).openDrawer();
+                            _fetchUserProfile();
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Container(
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 3))],
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.search, color: Colors.grey),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: TextField(
+                                controller: _searchController,
+                                style: const TextStyle(color: Colors.black87),
+                                decoration: const InputDecoration(
+                                  hintText: "Where are you going?",
+                                  hintStyle: TextStyle(color: Colors.grey),
+                                  border: InputBorder.none,
+                                ),
+                                onSubmitted: _openLocationPage,
+                              ),
+                            ),
+                            IconButton(
+                              icon: Icon(_isListening ? Icons.mic : Icons.mic_none, color: Colors.grey),
+                              onPressed: _toggleListening,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+                           // Recent Locations - styled like Rapido
+             if (locationHistory.isNotEmpty)
+  Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text("Recent Destinations", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 120, // Enough for ~2 items, scrollable if more
+          child: Scrollbar(
+            thumbVisibility: true,
+            child: ListView.separated(
+              itemCount: locationHistory.length,
+              separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFFE0E0E0)),
+              itemBuilder: (context, index) {
+                final location = locationHistory[index];
+                final title = location.split(',')[0].trim();
+                final subtitle = location.replaceFirst(title, '').trim();
+
+                return ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.history, color: Colors.black54),
+                  title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  trailing: const Icon(Icons.favorite_border, size: 20, color: Colors.grey),
+                  onTap: () {
+                    _searchController.text = location;
+                    _openLocationPage(location);
+                  },
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    ),
+  ),
+
+              // Explore
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text("Explore", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700)),
+                    InkWell(
+                      onTap: _showAllServices,
                       child: Row(
                         children: [
-                          const Icon(Icons.search, color: Colors.grey),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: TextField(
-                              controller: _searchController,
-                              style: const TextStyle(color: Colors.black87),
-                              decoration: const InputDecoration(
-                                hintText: "Where are you going?",
-                                hintStyle: TextStyle(color: Colors.grey),
-                                border: InputBorder.none,
-                              ),
-                              onSubmitted: _openLocationPage,
-                            ),
-                          ),
-                          IconButton(
-                            icon: Icon(_isListening ? Icons.mic : Icons.mic_none, color: Colors.grey),
-                            onPressed: _toggleListening,
-                          ),
+                          Text("View All", style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.blue)),
+                          const SizedBox(width: 4),
+                          const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.blue),
                         ],
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
 
-            // ──────────────────  EXPLORE SECTION  ──────────────────
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text("Explore",
-                      style: GoogleFonts.poppins(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white)),
-                  InkWell(
-                    onTap: _showAllServices, // ✅ Open modal bottom sheet
-                    child: Text("View all",
-                        style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.yellow)),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 25),
 
-            // ──────────────────  SERVICE CARDS  ──────────────────
-            Expanded(
-              child: Stack(
-                children: [
-                  Transform.translate(
-                    offset: const Offset(0, 80),
-                    child: Align(
-                      child: Opacity(
-                        opacity: 0.18,
-                        child: Image.asset('assets/images/charminar_white.png', height: 600, fit: BoxFit.contain),
+              // Cards
+              Expanded(
+                child: Stack(
+                  children: [
+                    Transform.translate(
+                      offset: const Offset(0, 80),
+                      child: Align(
+                        child: Opacity(
+                          opacity: 0.2,
+                          child: Image.asset('assets/images/charminar_white.png', height: 600, fit: BoxFit.contain),
+                        ),
                       ),
                     ),
-                  ),
-                  ListView.builder(
-                    padding: const EdgeInsets.only(bottom: 25),
-                    itemCount: services.length,
-                    itemBuilder: (ctx, idx) {
-                      return AnimatedBuilder(
-                        animation: _animations[idx],
-                        builder: (ctx, child) {
-                          final dx = _animations[idx].value.dx;
-                          final fromLeft = idx % 2 == 0;
-                          return Transform.translate(
-                            offset: Offset(dx * halfWidth, 0),
-                            child: Align(
-                              alignment: fromLeft ? Alignment.centerLeft : Alignment.centerRight,
-                              child: _buildHalfCard(
-                                services[idx]['label']!,
-                                services[idx]['image']!,
-                                halfWidth,
-                                fromLeft,
-                                ctx,
+                    ListView.builder(
+                      padding: const EdgeInsets.only(bottom: 25),
+                      itemCount: services.length,
+                      itemBuilder: (ctx, idx) {
+                        return AnimatedBuilder(
+                          animation: _animations[idx],
+                          builder: (ctx, child) {
+                            final dx = _animations[idx].value.dx;
+                            final fromLeft = idx % 2 == 0;
+                            return Transform.translate(
+                              offset: Offset(dx * halfWidth, 0),
+                              child: Align(
+                                alignment: fromLeft ? Alignment.centerLeft : Alignment.centerRight,
+                                child: _buildHalfCard(
+                                  services[idx]['label']!,
+                                  services[idx]['image']!,
+                                  halfWidth,
+                                  fromLeft,
+                                  ctx,
+                                ),
                               ),
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ],
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  /* ------------------------------------------------------------- */
   Widget _buildHalfCard(String label, String imagePath, double width, bool fromLeft, BuildContext ctx) {
     const double cardHeight = 55;
     return GestureDetector(
       onTap: () {
         if (label == 'Parcel') {
-          Navigator.push(
-            ctx,
-            MaterialPageRoute(builder: (_) => ParcelLocationPage()),
-          ).then((_) => _fetchUserProfile());
-
+          Navigator.push(ctx, MaterialPageRoute(builder: (_) => ParcelLocationPage())).then((_) => _fetchUserProfile());
         } else if (label == 'Car Trip') {
           showModalBottomSheet(
             context: ctx,
@@ -404,15 +480,10 @@ class _RealHomePageState extends State<RealHomePage>
             ),
             builder: (_) => const CarTripAgreementSheet(),
           ).then((_) => _fetchUserProfile());
-
         } else {
           selectedVehicle = label.toLowerCase();
-          Navigator.push(
-            ctx,
-            MaterialPageRoute(
-              builder: (_) => OpenStreetLocationPage(selectedVehicle: selectedVehicle),
-            ),
-          ).then((_) => _fetchUserProfile());
+          Navigator.push(ctx, MaterialPageRoute(builder: (_) => OpenStreetLocationPage(selectedVehicle: selectedVehicle)))
+              .then((_) => _fetchUserProfile());
         }
       },
       child: Stack(
@@ -452,7 +523,6 @@ class _RealHomePageState extends State<RealHomePage>
     );
   }
 
-  /* ------------------------------------------------------------- */
   Widget _buildDrawer(BuildContext ctx) {
     return Drawer(
       backgroundColor: Colors.white,

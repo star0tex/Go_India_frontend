@@ -44,12 +44,13 @@ dependencies:
   speech_to_text: ^7.1.0
   url_launcher: ^6.2.1
   intl: ^0.20.2
-  shared_preferences: ^2.2.2
   image_picker: ^1.0.7
   open_route_service: ^1.0.0
   location: ^8.0.1
   sliding_up_panel: ^2.0.0+1
+  jwt_decoder: ^2.0.1
   flutter_dotenv: ^5.1.0
+  shared_preferences: ^2.2.2
   geocoding: ^2.1.0
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -87,7 +88,12 @@ flutter:
     - assets/images/charminar_white.png
     - assets/images/Primium.png
     - assets/images/xl.png
-
+    - assets/images/background.png  
+    - assets/images/cartoon_bg.png  
+  fonts:
+    - family: Harrington
+      fonts:
+         - asset: assets/fonts/Harrington.ttf
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.

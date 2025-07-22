@@ -16,7 +16,7 @@ class HelpPage extends StatefulWidget {
 class _HelpPageState extends State<HelpPage> {
   /* ---------------- API base ---------------- */
   final String _baseUrl =
-      'http://192.168.174.12:5002/api/help'; // change if your IP/port differs
+      'http://192.168.237.12:5002/api/help'; // change if your IP/port differs
 
   /* ---------------- FAQs -------------------- */
   List<dynamic> _faqs = [];

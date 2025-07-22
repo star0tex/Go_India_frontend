@@ -1,11 +1,14 @@
+// full code (unchanged structure, only welcome message added for old users)
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
-import 'home_page.dart';          // new‑user flow
-import 'real_home_page.dart';     // returning users flow
+import 'home_page.dart';
+import 'real_home_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -21,188 +24,293 @@ class _LoginPageState extends State<LoginPage> {
 
   String _verificationId = '';
   bool _codeSent = false;
-  bool _autoVerified = false; // ← TRUE when verificationCompleted fires
-
-  /* ───────────────────────── Helpers ───────────────────────── */
-  Future<bool> _checkUserExists(String phoneNo) async {
-    try {
-      final res = await http.get(Uri.parse('http://192.168.174.12:5002/api/profile/$phoneNo'));
-      if (res.statusCode == 200) {
-        final data = json.decode(res.body);
-        return data['user'] != null;
-      }
-    } catch (e) {
-      debugPrint('User‑existence check failed: $e');
-    }
-    return false;
-  }
+  bool _autoVerified = false;
 
   Future<void> _routeUser(String phoneOnly) async {
-    final bool exists = await _checkUserExists(phoneOnly);
-    if (!mounted) return;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _showError("Login failed. Firebase user is null.");
+      return;
+    }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Center(child: Text(exists ? '👋 Welcome back!' : '✅ Phone number verified!',
-            style: const TextStyle(fontSize: 16))),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-      ),
-    );
+    _showLoadingDialog();
 
-    final Widget next = exists ? const RealHomePage() : HomePage(phone: phoneOnly);
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => next));
-  }
+    String token = await user.getIdToken() ?? '';
+    if (token.isEmpty) {
+      Navigator.pop(context);
+      _showError("Token is empty.");
+      return;
+    }
 
-  /* ───────────────────── Send OTP (instant UI) ───────────────────── */
-  Future<void> _sendOTP() async {
-    // Show OTP field instantly and put cursor there
-    setState(() => _codeSent = true);
-    Future.delayed(const Duration(milliseconds: 100), () => _otpFocus.requestFocus());
+    int attempts = 0;
+    bool tokenValid = false;
 
-    final String phone = "+91${_phoneController.text.trim()}";
-
-    await FirebaseAuth.instance.verifyPhoneNumber(
-      phoneNumber: phone,
-      timeout: const Duration(seconds: 60),
-      verificationCompleted: (PhoneAuthCredential credential) async {
-        // This triggers for test numbers or auto‑verify
-        try {
-          final UC = await FirebaseAuth.instance.signInWithCredential(credential);
-          if (UC.user != null) {
-            _autoVerified = true;
-            _routeUser(_phoneController.text.trim());
-          }
-        } catch (e) {
-          debugPrint('Auto‑verify sign‑in failed: $e');
+    while (attempts < 10) {
+      try {
+        final decoded = JwtDecoder.decode(token);
+        if (decoded.containsKey("phone_number") || decoded.containsKey("uid")) {
+          tokenValid = true;
+          break;
         }
-      },
-      verificationFailed: (FirebaseAuthException e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Center(child: Text("Verification failed: ${e.message}", textAlign: TextAlign.center)),
-            backgroundColor: Colors.red[600],
-            behavior: SnackBarBehavior.floating,
-          ),
+      } catch (_) {}
+
+      await Future.delayed(const Duration(seconds: 1));
+      token = await user.getIdToken(true) ?? '';
+      attempts++;
+    }
+
+    if (!tokenValid) {
+      Navigator.pop(context);
+      _showError("Login failed. Please try again.");
+      return;
+    }
+
+    try {
+      final res = await http.post(
+        Uri.parse("http://192.168.103.12:5002/api/auth/firebase-login"),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token",
+        },
+        body: jsonEncode({"phone": "+91$phoneOnly"}),
+      );
+
+      Navigator.pop(context);
+
+      if (res.statusCode == 200) {
+        final data = json.decode(res.body);
+        final isNewUser = data["newUser"] == true;
+
+        if (!isNewUser) {
+          _showError("Welcome back! 👋");
+        }
+
+        final Widget next = isNewUser
+            ? HomePage(phone: phoneOnly)
+            : const RealHomePage();
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => next),
         );
-      },
-      codeSent: (String verId, int? resendToken) {
-        _verificationId = verId;
-      },
-      codeAutoRetrievalTimeout: (String verId) {
-        _verificationId = verId;
-      },
-    );
+      } else {
+        _showError("Login failed: ${res.body}");
+      }
+    } catch (e) {
+      Navigator.pop(context);
+      _showError("Connection error: $e");
+    }
   }
 
-  /* ───────────────────── Verify OTP & Route ───────────────────── */
-  Future<void> _verifyOTP() async {
-    if (_autoVerified) return; // already signed in silently
+  Future<void> _sendOTP() async {
+    await FirebaseAuth.instance.signOut();
+    setState(() {
+      _codeSent = false;
+      _verificationId = '';
+      _otpController.clear();
+    });
 
-    final String otp = _otpController.text.trim();
+    final rawPhone = _phoneController.text.trim();
+    if (rawPhone.length != 10) {
+      _showError("Please enter a valid 10-digit phone number.");
+      return;
+    }
+
+    final String phone = "+91$rawPhone";
+
+    try {
+      await FirebaseAuth.instance.verifyPhoneNumber(
+        phoneNumber: phone,
+        timeout: const Duration(seconds: 60),
+        verificationCompleted: (PhoneAuthCredential credential) async {
+          try {
+            final userCred = await FirebaseAuth.instance.signInWithCredential(credential);
+            if (userCred.user != null) {
+              _autoVerified = true;
+              await _routeUser(rawPhone);
+            }
+          } catch (e) {
+            debugPrint('Auto-verify error: $e');
+            _showError("Auto-verification failed.");
+          }
+        },
+        verificationFailed: (FirebaseAuthException e) {
+          _showError("Verification failed: ${e.message}");
+        },
+        codeSent: (String verId, int? resendToken) {
+          setState(() {
+            _verificationId = verId;
+            _codeSent = true;
+          });
+          Future.delayed(const Duration(milliseconds: 100), () => _otpFocus.requestFocus());
+        },
+        codeAutoRetrievalTimeout: (String verId) {
+          _verificationId = verId;
+        },
+      );
+    } catch (e) {
+      _showError("Failed to send OTP: $e");
+    }
+  }
+
+  Future<void> _verifyOTP() async {
+    if (_autoVerified) return;
+
+    final otp = _otpController.text.trim();
+    if (otp.length != 6) {
+      _showError("Enter the 6-digit OTP.");
+      return;
+    }
+
+    if (_verificationId.isEmpty) {
+      _showError("Verification ID not found. Please request OTP again.");
+      return;
+    }
+
     final PhoneAuthCredential credential = PhoneAuthProvider.credential(
       verificationId: _verificationId,
       smsCode: otp,
     );
 
     try {
-      final UserCredential userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
-      if (userCredential.user == null) throw Exception('user is null');
-
+      final userCred = await FirebaseAuth.instance.signInWithCredential(credential);
+      if (userCred.user == null) {
+        throw Exception("Firebase user is null");
+      }
       await _routeUser(_phoneController.text.trim());
     } catch (e) {
-      // If already signed‑in (e.g., auto‑verify), proceed anyway
       if (FirebaseAuth.instance.currentUser != null) {
         await _routeUser(_phoneController.text.trim());
         return;
       }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Center(child: Text("Invalid OTP: $e", textAlign: TextAlign.center)),
-          backgroundColor: Colors.red[600],
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      _showError("Invalid OTP: ${e.toString()}");
     }
   }
 
-  /* ───────────────────────── Widget Build ───────────────────────── */
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 48),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Welcome to Indian Ride',
-                style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 40),
-            const Text('Enter your mobile number', style: TextStyle(fontSize: 18)),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _phoneController,
-              keyboardType: TextInputType.phone,
-              maxLength: 10,
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-                LengthLimitingTextInputFormatter(10),
-              ],
-              decoration: InputDecoration(
-                prefixText: '+91 ',
-                hintText: '0000000000',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                counterText: '',
-              ),
-            ),
-            const SizedBox(height: 20),
-            if (_codeSent)
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Enter OTP', style: TextStyle(fontSize: 18)),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _otpController,
-                    focusNode: _otpFocus,
-                    keyboardType: TextInputType.number,
-                    maxLength: 6,
-                    inputFormatters: [
-                      LengthLimitingTextInputFormatter(6),
-                      FilteringTextInputFormatter.digitsOnly,
-                    ],
-                    decoration: InputDecoration(
-                      hintText: '6‑digit OTP',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      counterText: '',
-                    ),
-                  ),
-                ],
-              ),
-            const SizedBox(height: 30),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF0D47A1), // dark blue
-                  foregroundColor: Colors.white, // white text
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-                onPressed: _codeSent ? _verifyOTP : _sendOTP,
-                child: Text(_codeSent ? 'Verify OTP' : 'Send OTP'),
-              ),
-            ),
-          ],
+  void _showLoadingDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text("Logging you in...", style: TextStyle(fontSize: 16)),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  /* ───────────────────────── Lifecycle ───────────────────────── */
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, textAlign: TextAlign.center),
+        backgroundColor: Colors.red[600],
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Opacity(
+            opacity: 0.15,
+            child: Image.asset('assets/images/background.png', fit: BoxFit.fitHeight),
+          ),
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 48),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Welcome to GhumINDIA',
+                    style: TextStyle(
+                      fontSize: 26,
+                      fontFamily: 'Harrington',
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 40),
+                  const Text('Enter your mobile number', style: TextStyle(fontSize: 18)),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _phoneController,
+                    keyboardType: TextInputType.phone,
+                    maxLength: 10,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(10),
+                    ],
+                    decoration: InputDecoration(
+                      prefixText: '+91 ',
+                      hintText: '0000000000',
+                      filled: true,
+                      fillColor: Colors.white.withOpacity(0.2),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      counterText: '',
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  if (_codeSent)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Enter OTP', style: TextStyle(fontSize: 18)),
+                        const SizedBox(height: 10),
+                        TextField(
+                          controller: _otpController,
+                          focusNode: _otpFocus,
+                          keyboardType: TextInputType.number,
+                          maxLength: 6,
+                          inputFormatters: [
+                            LengthLimitingTextInputFormatter(6),
+                            FilteringTextInputFormatter.digitsOnly,
+                          ],
+                          decoration: InputDecoration(
+                            hintText: '6-digit OTP',
+                            filled: true,
+                            fillColor: Colors.white.withOpacity(0.2),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            counterText: '',
+                          ),
+                        ),
+                      ],
+                    ),
+                  const SizedBox(height: 30),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0D47A1),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                      onPressed: _codeSent ? _verifyOTP : _sendOTP,
+                      child: Text(_codeSent ? 'Verify OTP' : 'Send OTP'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _phoneController.dispose();

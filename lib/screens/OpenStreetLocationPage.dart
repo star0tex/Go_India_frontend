@@ -36,7 +36,7 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
   static const _historyKey = 'location_history';
   List<String> _history = [];
 
-  final String apiBase = 'http://192.168.174.12:5002';
+  final String apiBase = 'http://192.168.103.12:5002';
   final List<String> vehicles = ['bike', 'auto', 'car', 'premium', 'xl'];
   final Map<String, double> _vehicleFares = {};
   bool _loadingFares = false;
