@@ -67,7 +67,7 @@ class _LoginPageState extends State<LoginPage> {
 
     try {
       final res = await http.post(
-        Uri.parse("http://192.168.103.12:5002/api/auth/firebase-login"),
+        Uri.parse("http://192.168.210.12:5002/api/auth/firebase-login"),
         headers: {
           "Content-Type": "application/json",
           "Authorization": "Bearer $token",
@@ -85,9 +85,8 @@ class _LoginPageState extends State<LoginPage> {
           _showError("Welcome back! 👋");
         }
 
-        final Widget next = isNewUser
-            ? HomePage(phone: phoneOnly)
-            : const RealHomePage();
+        final Widget next =
+            isNewUser ? HomePage(phone: phoneOnly) : const RealHomePage();
 
         Navigator.pushReplacement(
           context,
@@ -124,7 +123,9 @@ class _LoginPageState extends State<LoginPage> {
         timeout: const Duration(seconds: 60),
         verificationCompleted: (PhoneAuthCredential credential) async {
           try {
-            final userCred = await FirebaseAuth.instance.signInWithCredential(credential);
+            final userCred = await FirebaseAuth.instance.signInWithCredential(
+              credential,
+            );
             if (userCred.user != null) {
               _autoVerified = true;
               await _routeUser(rawPhone);
@@ -142,7 +143,10 @@ class _LoginPageState extends State<LoginPage> {
             _verificationId = verId;
             _codeSent = true;
           });
-          Future.delayed(const Duration(milliseconds: 100), () => _otpFocus.requestFocus());
+          Future.delayed(
+            const Duration(milliseconds: 100),
+            () => _otpFocus.requestFocus(),
+          );
         },
         codeAutoRetrievalTimeout: (String verId) {
           _verificationId = verId;
@@ -173,7 +177,9 @@ class _LoginPageState extends State<LoginPage> {
     );
 
     try {
-      final userCred = await FirebaseAuth.instance.signInWithCredential(credential);
+      final userCred = await FirebaseAuth.instance.signInWithCredential(
+        credential,
+      );
       if (userCred.user == null) {
         throw Exception("Firebase user is null");
       }
@@ -227,11 +233,17 @@ class _LoginPageState extends State<LoginPage> {
         children: [
           Opacity(
             opacity: 0.15,
-            child: Image.asset('assets/images/background.png', fit: BoxFit.fitHeight),
+            child: Image.asset(
+              'assets/images/background.png',
+              fit: BoxFit.fitHeight,
+            ),
           ),
           SafeArea(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 48),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 24.0,
+                vertical: 48,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -244,7 +256,10 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                   ),
                   const SizedBox(height: 40),
-                  const Text('Enter your mobile number', style: TextStyle(fontSize: 18)),
+                  const Text(
+                    'Enter your mobile number',
+                    style: TextStyle(fontSize: 18),
+                  ),
                   const SizedBox(height: 10),
                   TextField(
                     controller: _phoneController,
@@ -259,7 +274,9 @@ class _LoginPageState extends State<LoginPage> {
                       hintText: '0000000000',
                       filled: true,
                       fillColor: Colors.white.withOpacity(0.2),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                       counterText: '',
                     ),
                   ),
@@ -283,7 +300,9 @@ class _LoginPageState extends State<LoginPage> {
                             hintText: '6-digit OTP',
                             filled: true,
                             fillColor: Colors.white.withOpacity(0.2),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                             counterText: '',
                           ),
                         ),
@@ -294,7 +313,7 @@ class _LoginPageState extends State<LoginPage> {
                     width: double.infinity,
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF0D47A1),
+                        backgroundColor: const Color.fromRGBO(98, 205, 255, 1),
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                       ),

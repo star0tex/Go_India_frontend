@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
-import 'OpenStreetLocationPage.dart';
+import 'short_trip_page.dart';
 import 'profile_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
@@ -9,6 +9,10 @@ import 'parcel_location_page.dart';
 import 'car_trip_agreement_sheet.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+import 'help_page.dart';
+import 'parcel_live_tracking_page.dart';
+import 'ride_history_page.dart';
+//import 'safety_page.dart';
 
 class RealHomePage extends StatefulWidget {
   const RealHomePage({super.key});
@@ -17,7 +21,8 @@ class RealHomePage extends StatefulWidget {
   State<RealHomePage> createState() => _RealHomePageState();
 }
 
-class _RealHomePageState extends State<RealHomePage> with TickerProviderStateMixin {
+class _RealHomePageState extends State<RealHomePage>
+    with TickerProviderStateMixin {
   final services = [
     {'label': 'Bike', 'image': 'assets/images/bike.png'},
     {'label': 'Auto', 'image': 'assets/images/auto.png'},
@@ -64,7 +69,8 @@ class _RealHomePageState extends State<RealHomePage> with TickerProviderStateMix
         return Tween<Offset>(
           begin: Offset(fromLeft ? -1.5 : 1.5, 0),
           end: Offset.zero,
-        ).animate(CurvedAnimation(parent: _controllers[i], curve: Curves.easeOut));
+        ).animate(
+            CurvedAnimation(parent: _controllers[i], curve: Curves.easeOut));
       },
     );
     Future.forEach<int>(List.generate(services.length, (i) => i), (i) async {
@@ -72,14 +78,17 @@ class _RealHomePageState extends State<RealHomePage> with TickerProviderStateMix
       _controllers[i].forward();
     });
 
-    phone = FirebaseAuth.instance.currentUser?.phoneNumber?.replaceAll('+91', '') ?? '';
+    phone =
+        FirebaseAuth.instance.currentUser?.phoneNumber?.replaceAll('+91', '') ??
+            '';
     _fetchUserProfile();
     _loadLocationHistory();
   }
 
   Future<void> _fetchUserProfile() async {
     try {
-      final res = await http.get(Uri.parse('http://192.168.103.12:5002/api/user/$phone'));
+      final res = await http
+          .get(Uri.parse('http://192.168.210.12:5002/api/user/$phone'));
       if (res.statusCode == 200) {
         final user = json.decode(res.body)['user'];
         setState(() {
@@ -121,7 +130,6 @@ class _RealHomePageState extends State<RealHomePage> with TickerProviderStateMix
     setState(() {});
   }
 
-
   Future<void> _toggleListening() async {
     if (_isListening) {
       await _speech.stop();
@@ -147,39 +155,40 @@ class _RealHomePageState extends State<RealHomePage> with TickerProviderStateMix
     });
   }
 
-void _openLocationPage(String destination) {
-  if (destination.isEmpty) return;
+  void _openLocationPage(String destination) {
+    if (destination.isEmpty) return;
 
-  const allowedTypes = ['bike', 'auto', 'car', 'premium', 'xl'];
-  final vehicle = selectedVehicle?.toLowerCase().trim();
+    const allowedTypes = ['bike', 'auto', 'car', 'premium', 'xl'];
+    final vehicle = selectedVehicle?.toLowerCase().trim();
 
-  // Fallback to "bike" if no vehicle selected or vehicle not allowed
-  final effectiveVehicle = allowedTypes.contains(vehicle) ? vehicle : 'bike';
-  selectedVehicle = effectiveVehicle; // update it globally
+    // Fallback to "bike" if no vehicle selected or vehicle not allowed
+    final effectiveVehicle = allowedTypes.contains(vehicle) ? vehicle : 'bike';
+    selectedVehicle = effectiveVehicle; // update it globally
 
-  // Save to history only for allowed vehicles
-  if (allowedTypes.contains(effectiveVehicle)) {
-    _addToHistory(destination);
-  }
+    // Save to history only for allowed vehicles
+    if (allowedTypes.contains(effectiveVehicle)) {
+      _addToHistory(destination);
+    }
 
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) => OpenStreetLocationPage(
-        initialDrop: destination,
-        selectedVehicle: effectiveVehicle,
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => OpenStreetLocationPage(
+          initialDrop: destination,
+          selectedVehicle: effectiveVehicle,
+        ),
       ),
-    ),
-  ).then((_) => _fetchUserProfile());
+    ).then((_) => _fetchUserProfile());
 
-  _searchController.clear();
-}
+    _searchController.clear();
+  }
 
   void _showAllServices() {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) {
         return SizedBox(
           height: 420,
@@ -189,9 +198,13 @@ void _openLocationPage(String destination) {
                 margin: const EdgeInsets.only(top: 12, bottom: 8),
                 width: 40,
                 height: 4,
-                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+                decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2)),
               ),
-              Text('All Services', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600)),
+              Text('All Services',
+                  style: GoogleFonts.poppins(
+                      fontSize: 18, fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
               Expanded(
                 child: GridView.builder(
@@ -209,7 +222,10 @@ void _openLocationPage(String destination) {
                       onTap: () {
                         Navigator.pop(ctx);
                         if (data['label'] == 'Parcel') {
-                          Navigator.push(context, MaterialPageRoute(builder: (_) => ParcelLocationPage()))
+                          Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (_) => ParcelLocationPage()))
                               .then((_) => _fetchUserProfile());
                         } else if (data['label'] == 'Car Trip') {
                           showModalBottomSheet(
@@ -217,16 +233,21 @@ void _openLocationPage(String destination) {
                             isScrollControlled: true,
                             backgroundColor: Colors.white,
                             shape: const RoundedRectangleBorder(
-                              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                              borderRadius: BorderRadius.vertical(
+                                  top: Radius.circular(24)),
                             ),
                             builder: (_) => const CarTripAgreementSheet(),
                           ).then((_) => _fetchUserProfile());
                         } else {
-                          selectedVehicle = data['label'];
+                          selectedVehicle = data['label']!.toLowerCase();
+                          if (_searchController.text.isNotEmpty) {
+                            _addToHistory(_searchController.text);
+                          }
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => OpenStreetLocationPage(selectedVehicle: data['label']),
+                              builder: (_) => OpenStreetLocationPage(
+                                  selectedVehicle: selectedVehicle),
                             ),
                           ).then((_) => _fetchUserProfile());
                         }
@@ -240,13 +261,15 @@ void _openLocationPage(String destination) {
                                 borderRadius: BorderRadius.circular(16),
                               ),
                               padding: const EdgeInsets.all(12),
-                              child: Image.asset(data['image']!, fit: BoxFit.contain),
+                              child: Image.asset(data['image']!,
+                                  fit: BoxFit.contain),
                             ),
                           ),
                           const SizedBox(height: 6),
                           Text(data['label']!,
                               textAlign: TextAlign.center,
-                              style: GoogleFonts.roboto(fontSize: 14, fontWeight: FontWeight.w600)),
+                              style: GoogleFonts.roboto(
+                                  fontSize: 14, fontWeight: FontWeight.w600)),
                         ],
                       ),
                     );
@@ -286,9 +309,10 @@ void _openLocationPage(String destination) {
             children: [
               // Header
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 decoration: const BoxDecoration(
-                  color: Color.fromARGB(255, 98, 205, 255),
+                  color: Color.fromRGBO(98, 205, 255, 1),
                   borderRadius: BorderRadius.only(
                     bottomLeft: Radius.circular(24),
                     bottomRight: Radius.circular(24),
@@ -301,12 +325,16 @@ void _openLocationPage(String destination) {
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(12),
                         boxShadow: const [
-                          BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2)),
+                          BoxShadow(
+                              color: Colors.black12,
+                              blurRadius: 4,
+                              offset: Offset(0, 2)),
                         ],
                       ),
                       child: Builder(
                         builder: (ctx) => IconButton(
-                          icon: const Icon(Icons.menu, color: Colors.black, size: 28),
+                          icon: const Icon(Icons.menu,
+                              color: Colors.black, size: 28),
                           onPressed: () {
                             Scaffold.of(ctx).openDrawer();
                             _fetchUserProfile();
@@ -321,7 +349,12 @@ void _openLocationPage(String destination) {
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(30),
-                          boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 3))],
+                          boxShadow: const [
+                            BoxShadow(
+                                color: Colors.black12,
+                                blurRadius: 6,
+                                offset: Offset(0, 3))
+                          ],
                         ),
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: Row(
@@ -341,7 +374,9 @@ void _openLocationPage(String destination) {
                               ),
                             ),
                             IconButton(
-                              icon: Icon(_isListening ? Icons.mic : Icons.mic_none, color: Colors.grey),
+                              icon: Icon(
+                                  _isListening ? Icons.mic : Icons.mic_none,
+                                  color: Colors.grey),
                               onPressed: _toggleListening,
                             ),
                           ],
@@ -352,68 +387,86 @@ void _openLocationPage(String destination) {
                 ),
               ),
 
-                           // Recent Locations - styled like Rapido
-             if (locationHistory.isNotEmpty)
-  Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text("Recent Destinations", style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 8),
-        SizedBox(
-          height: 120, // Enough for ~2 items, scrollable if more
-          child: Scrollbar(
-            thumbVisibility: true,
-            child: ListView.separated(
-              itemCount: locationHistory.length,
-              separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFFE0E0E0)),
-              itemBuilder: (context, index) {
-                final location = locationHistory[index];
-                final title = location.split(',')[0].trim();
-                final subtitle = location.replaceFirst(title, '').trim();
+              // Recent Locations - styled like Rapido
+              if (locationHistory.isNotEmpty)
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text("Recent Destinations",
+                          style: GoogleFonts.poppins(
+                              fontSize: 16, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        height: 120, // Enough for ~2 items, scrollable if more
+                        child: Scrollbar(
+                          thumbVisibility: true,
+                          child: ListView.separated(
+                            itemCount: locationHistory.length,
+                            separatorBuilder: (_, __) => const Divider(
+                                height: 1, color: Color(0xFFE0E0E0)),
+                            itemBuilder: (context, index) {
+                              final location = locationHistory[index];
+                              final title = location.split(',')[0].trim();
+                              final subtitle =
+                                  location.replaceFirst(title, '').trim();
 
-                return ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.history, color: Colors.black54),
-                  title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  trailing: const Icon(Icons.favorite_border, size: 20, color: Colors.grey),
-                  onTap: () {
-                    _searchController.text = location;
-                    _openLocationPage(location);
-                  },
-                );
-              },
-            ),
-          ),
-        ),
-      ],
-    ),
-  ),
+                              return ListTile(
+                                dense: true,
+                                contentPadding: EdgeInsets.zero,
+                                leading: const Icon(Icons.history,
+                                    color: Colors.black54),
+                                title: Text(title,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w600)),
+                                subtitle: Text(subtitle,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
+                                trailing: const Icon(Icons.favorite_border,
+                                    size: 20, color: Colors.grey),
+                                onTap: () {
+                                  _searchController.text = location;
+                                  _openLocationPage(location);
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
 
               // Explore
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text("Explore", style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w700)),
+                    Text("Explore",
+                        style: GoogleFonts.poppins(
+                            fontSize: 18, fontWeight: FontWeight.w700)),
                     InkWell(
                       onTap: _showAllServices,
                       child: Row(
                         children: [
-                          Text("View All", style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.blue)),
+                          Text("View All",
+                              style: GoogleFonts.poppins(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.blue)),
                           const SizedBox(width: 4),
-                          const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.blue),
+                          const Icon(Icons.arrow_forward_ios,
+                              size: 14, color: Colors.blue),
                         ],
                       ),
                     ),
                   ],
                 ),
               ),
-
 
               // Cards
               Expanded(
@@ -424,7 +477,10 @@ void _openLocationPage(String destination) {
                       child: Align(
                         child: Opacity(
                           opacity: 0.2,
-                          child: Image.asset('assets/images/charminar_white.png', height: 600, fit: BoxFit.contain),
+                          child: Image.asset(
+                              'assets/images/charminar_white.png',
+                              height: 600,
+                              fit: BoxFit.contain),
                         ),
                       ),
                     ),
@@ -440,7 +496,9 @@ void _openLocationPage(String destination) {
                             return Transform.translate(
                               offset: Offset(dx * halfWidth, 0),
                               child: Align(
-                                alignment: fromLeft ? Alignment.centerLeft : Alignment.centerRight,
+                                alignment: fromLeft
+                                    ? Alignment.centerLeft
+                                    : Alignment.centerRight,
                                 child: _buildHalfCard(
                                   services[idx]['label']!,
                                   services[idx]['image']!,
@@ -464,12 +522,15 @@ void _openLocationPage(String destination) {
     );
   }
 
-  Widget _buildHalfCard(String label, String imagePath, double width, bool fromLeft, BuildContext ctx) {
+  Widget _buildHalfCard(String label, String imagePath, double width,
+      bool fromLeft, BuildContext ctx) {
     const double cardHeight = 55;
     return GestureDetector(
       onTap: () {
         if (label == 'Parcel') {
-          Navigator.push(ctx, MaterialPageRoute(builder: (_) => ParcelLocationPage())).then((_) => _fetchUserProfile());
+          Navigator.push(
+                  ctx, MaterialPageRoute(builder: (_) => ParcelLocationPage()))
+              .then((_) => _fetchUserProfile());
         } else if (label == 'Car Trip') {
           showModalBottomSheet(
             context: ctx,
@@ -482,8 +543,15 @@ void _openLocationPage(String destination) {
           ).then((_) => _fetchUserProfile());
         } else {
           selectedVehicle = label.toLowerCase();
-          Navigator.push(ctx, MaterialPageRoute(builder: (_) => OpenStreetLocationPage(selectedVehicle: selectedVehicle)))
-              .then((_) => _fetchUserProfile());
+          if (_searchController.text.isNotEmpty) {
+            _addToHistory(_searchController.text);
+          }
+          Navigator.push(
+            ctx,
+            MaterialPageRoute(
+                builder: (_) =>
+                    OpenStreetLocationPage(selectedVehicle: selectedVehicle)),
+          ).then((_) => _fetchUserProfile());
         }
       },
       child: Stack(
@@ -496,16 +564,27 @@ void _openLocationPage(String destination) {
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: fromLeft
-                  ? const BorderRadius.only(topRight: Radius.circular(20), bottomRight: Radius.circular(20))
-                  : const BorderRadius.only(topLeft: Radius.circular(20), bottomLeft: Radius.circular(20)),
+                  ? const BorderRadius.only(
+                      topRight: Radius.circular(20),
+                      bottomRight: Radius.circular(20))
+                  : const BorderRadius.only(
+                      topLeft: Radius.circular(20),
+                      bottomLeft: Radius.circular(20)),
               boxShadow: const [
-                BoxShadow(color: Color.fromRGBO(13, 27, 42, 0.3), blurRadius: 12, offset: Offset(0, 5)),
+                BoxShadow(
+                    color: Color.fromRGBO(13, 27, 42, 0.3),
+                    blurRadius: 12,
+                    offset: Offset(0, 5)),
               ],
             ),
             alignment: Alignment.center,
             child: Text(label,
                 textAlign: TextAlign.center,
-                style: GoogleFonts.roboto(fontSize: 30, fontWeight: FontWeight.w700, color: Colors.black87, letterSpacing: 0.8)),
+                style: GoogleFonts.roboto(
+                    fontSize: 30,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black87,
+                    letterSpacing: 0.8)),
           ),
           Positioned(
             top: -20,
@@ -515,7 +594,8 @@ void _openLocationPage(String destination) {
               width: 130,
               height: 130,
               alignment: Alignment.center,
-              child: Image.asset(imagePath, width: 130, height: 130, fit: BoxFit.contain),
+              child: Image.asset(imagePath,
+                  width: 130, height: 130, fit: BoxFit.contain),
             ),
           ),
         ],
@@ -535,7 +615,8 @@ void _openLocationPage(String destination) {
             child: GestureDetector(
               onTap: () async {
                 Navigator.pop(ctx);
-                await Navigator.push(ctx, MaterialPageRoute(builder: (_) => const ProfilePage()));
+                await Navigator.push(ctx,
+                    MaterialPageRoute(builder: (_) => const ProfilePage()));
                 _fetchUserProfile();
               },
               child: Container(
@@ -544,58 +625,102 @@ void _openLocationPage(String destination) {
                   color: Colors.grey[100],
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: const [
-                    BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 3)),
+                    BoxShadow(
+                        color: Colors.black12,
+                        blurRadius: 6,
+                        offset: Offset(0, 3)),
                   ],
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Row(
                   children: [
-                    Row(
+                    const CircleAvatar(
+                      radius: 26,
+                      backgroundColor: Colors.white,
+                      child: Icon(Icons.person, size: 30, color: Colors.black),
+                    ),
+                    const SizedBox(width: 12),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const CircleAvatar(radius: 26, backgroundColor: Colors.white, child: Icon(Icons.person, size: 30, color: Colors.black)),
-                        const SizedBox(width: 12),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(name.isNotEmpty ? name : 'Guest', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                            const SizedBox(height: 4),
-                            Text(phone, style: const TextStyle(color: Colors.grey)),
-                          ],
-                        ),
+                        Text(name.isNotEmpty ? name : 'Guest',
+                            style: const TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 4),
+                        Text(phone, style: const TextStyle(color: Colors.grey)),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    const Divider(),
-                    const SizedBox(height: 8),
-                    Row(children: [const Icon(Icons.star, color: Colors.amber), const SizedBox(width: 8), Text("$rating My Rating", style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500))])
                   ],
                 ),
               ),
             ),
           ),
           const SizedBox(height: 20),
-          _drawerTile(Icons.help_outline, "Help"),
-          _drawerTile(Icons.local_shipping_outlined, "Parcel - Send Items"),
+
+          // Updated Menu Items
+          _drawerTile(
+            Icons.help_outline,
+            "Help",
+            onTap: () {
+              Navigator.pop(ctx); // Close drawer
+              Navigator.push(
+                ctx,
+                MaterialPageRoute(builder: (_) => const HelpPage()),
+              );
+            },
+          ),
+
+          _drawerTile(
+            Icons.local_shipping_outlined,
+            "Parcel Live Tracking",
+            onTap: () {
+              Navigator.pop(ctx);
+              Navigator.push(
+                ctx,
+                MaterialPageRoute(
+                    builder: (_) => const ParcelLiveTrackingPage()),
+              );
+            },
+          ),
+
+          _drawerTile(
+            Icons.history,
+            "Ride History",
+            onTap: () {
+              Navigator.pop(ctx);
+              Navigator.push(
+                ctx,
+                MaterialPageRoute(builder: (_) => const RideHistoryPage()),
+              );
+            },
+          ),
+          //  _drawerTile(
+          //    Icons.shield_outlined,
+          //    "Safety",
+          //   onTap: () {
+          //     Navigator.pop(ctx);
+          //    Navigator.push(
+          //      ctx,
+          //     MaterialPageRoute(builder: (_) => const SafetyPage()),
+          //    );
+          //     },
+          //  ),
+
+          _drawerTile(Icons.favorite_border, "Favourites"),
           _drawerTile(Icons.payment, "Payment"),
-          _drawerTile(Icons.history, "My Rides"),
-          _drawerTile(Icons.shield_outlined, "Safety"),
-          _drawerTile(Icons.card_giftcard_outlined, "Refer and Earn", subtitle: "Get ₹50"),
-          _drawerTile(Icons.emoji_events_outlined, "My Rewards"),
+          _drawerTile(Icons.card_giftcard_outlined, "Refer and Earn"),
           _drawerTile(Icons.notifications_none, "Notifications"),
-          _drawerTile(Icons.policy_outlined, "Claims"),
-          _drawerTile(Icons.settings_outlined, "Settings"),
+          _drawerTile(Icons.logout, "Logout"),
           const SizedBox(height: 20),
         ],
       ),
     );
   }
 
-  Widget _drawerTile(IconData icon, String title, {String? subtitle}) {
+  Widget _drawerTile(IconData icon, String title, {VoidCallback? onTap}) {
     return ListTile(
       leading: Icon(icon, color: Colors.black87),
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.w500)),
-      subtitle: subtitle != null ? Text(subtitle, style: TextStyle(color: Colors.grey[600])) : null,
-      onTap: () {},
+      onTap: onTap,
     );
   }
 }

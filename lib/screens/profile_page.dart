@@ -25,12 +25,14 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   void initState() {
     super.initState();
-    phone = FirebaseAuth.instance.currentUser?.phoneNumber?.replaceAll('+91', '') ?? '';
+    phone =
+        FirebaseAuth.instance.currentUser?.phoneNumber?.replaceAll('+91', '') ??
+            '';
     _fetchProfile();
   }
 
   Future<void> _fetchProfile() async {
-    final url = Uri.parse('http://192.168.103.12:5002/api/user/$phone');
+    final url = Uri.parse('http://192.168.210.12:5002/api/user/$phone');
     final res = await http.get(url);
 
     if (res.statusCode == 200) {
@@ -51,7 +53,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Future<void> _updateProfile() async {
-    final url = Uri.parse('http://192.168.103.12:5002/api/user/$phone');
+    final url = Uri.parse('http://192.168.210.12:5002/api/user/$phone');
     final res = await http.put(
       url,
       headers: {'Content-Type': 'application/json'},
@@ -65,13 +67,16 @@ class _ProfilePageState extends State<ProfilePage> {
     );
 
     if (res.statusCode == 200) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Profile Updated")));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text("Profile Updated")));
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Failed to update")));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text("Failed to update")));
     }
   }
 
-  Widget _buildInput(String label, TextEditingController ctrl, IconData icon, {bool required = false}) {
+  Widget _buildInput(String label, TextEditingController ctrl, IconData icon,
+      {bool required = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: TextFormField(
@@ -96,7 +101,8 @@ class _ProfilePageState extends State<ProfilePage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Profile"),
-        backgroundColor: Colors.indigo[900],
+        backgroundColor: Color.fromRGBO(98, 205, 255, 1),
+        foregroundColor: Colors.white,
         actions: [
           IconButton(icon: Icon(Icons.help_outline), onPressed: () {}),
         ],
@@ -111,7 +117,8 @@ class _ProfilePageState extends State<ProfilePage> {
               _buildInput("Email", emailCtrl, Icons.email),
               _buildInput("Gender", genderCtrl, Icons.wc),
               _buildInput("Date of Birth", dobCtrl, Icons.cake),
-              _buildInput("Emergency Contact", emergencyCtrl, Icons.phone, required: true),
+              _buildInput("Emergency Contact", emergencyCtrl, Icons.phone,
+                  required: true),
               const SizedBox(height: 16),
               ListTile(
                 leading: const Icon(Icons.phone),
@@ -121,7 +128,8 @@ class _ProfilePageState extends State<ProfilePage> {
               ListTile(
                 leading: const Icon(Icons.star),
                 title: const Text("Member Since"),
-                subtitle: Text(memberSince.isNotEmpty ? memberSince : "Fetching..."),
+                subtitle:
+                    Text(memberSince.isNotEmpty ? memberSince : "Fetching..."),
               ),
               const SizedBox(height: 24),
               ElevatedButton(
@@ -129,10 +137,11 @@ class _ProfilePageState extends State<ProfilePage> {
                   if (_formKey.currentState!.validate()) _updateProfile();
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.indigo[900],
+                  backgroundColor: Color.fromRGBO(98, 205, 255, 1),
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
-                child: const Text("Update Profile", style: TextStyle(fontSize: 16)),
+                child: const Text("Update Profile",
+                    style: TextStyle(fontSize: 16)),
               )
             ],
           ),

@@ -32,7 +32,7 @@
               />
               <meta-data
              android:name="com.google.firebase.auth.API_KEY"
-            android:value="your_real_api_key_here_from_firebase_console" />
+            android:value="AIzaSyALNJltc3Leg3TNNXDPTdDuygoYdXvcGQs" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -43,6 +43,8 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+            <meta-data android:name="com.google.android.geo.API_KEY"
+             android:value="AIzaSyCqfjktNhxjKfM-JmpSwBk9KtgY429QWY8"/>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

@@ -3,19 +3,17 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
 import 'package:sliding_up_panel/sliding_up_panel.dart';
 
 /* ─── config ─── */
-const _BASE  = 'http://192.168.174.12:5002';
-const _HEAD  = {'User-Agent': 'GoIndiaApp'};          // Nominatim politeness
+const _BASE = 'http://192.168.210.12:5002';
+const _HEAD = {'User-Agent': 'GoIndiaApp'}; // Nominatim politeness
 
-/* ─── tiny model ─── */
 class _Loc {
   _Loc(this.name, this.lat, this.lon);
   final String name;
@@ -23,41 +21,65 @@ class _Loc {
   final double lon;
 }
 
-/* ─── page ─── */
 class ParcelLocationPage extends StatefulWidget {
   const ParcelLocationPage({super.key});
-
   @override
   State<ParcelLocationPage> createState() => _ParcelLocationPageState();
 }
 
 class _ParcelLocationPageState extends State<ParcelLocationPage> {
-  /* text controllers */
   final pickupCtl = TextEditingController();
-  final dropCtl   = TextEditingController();
-  final houseCtl  = TextEditingController();
-  final nameCtl   = TextEditingController();
-  final phoneCtl  = TextEditingController();
+  final dropCtl = TextEditingController();
+  final houseCtl = TextEditingController();
+  final nameCtl = TextEditingController();
+  final phoneCtl = TextEditingController();
   final weightCtl = TextEditingController();
-  final notesCtl  = TextEditingController();
+  final notesCtl = TextEditingController();
 
-  /* map */
-  final MapController _map = MapController();
+  GoogleMapController? _mapController;
   LatLng mapCenter = const LatLng(20.5937, 78.9629);
   LatLng? pickup, drop;
   List<LatLng> routePts = [];
 
-  /* state */
   double? _km, _cost;
-  bool _loading = false;                // ← single flag
+  bool _loading = false;
   File? _photo;
   String _payment = 'Prepaid';
   bool _useMyContact = false;
 
-  /* favourites */
   final favs = <String, _Loc>{};
 
-  /* ───────── init ───────── */
+  Set<Marker> get _markers {
+    final markers = <Marker>{};
+    if (pickup != null) {
+      markers.add(Marker(
+        markerId: const MarkerId('pickup'),
+        position: pickup!,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+      ));
+    }
+    if (drop != null) {
+      markers.add(Marker(
+        markerId: const MarkerId('drop'),
+        position: drop!,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+      ));
+    }
+    return markers;
+  }
+
+  Set<Polyline> get _polylines {
+    if (routePts.isEmpty) return {};
+    return {
+      Polyline(
+        polylineId: const PolylineId('route'),
+        color: Colors.blue,
+        width: 4,
+        points: routePts,
+      )
+    };
+  }
+
   @override
   void initState() {
     super.initState();
@@ -67,29 +89,29 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
   Future<void> _initGPS() async {
     try {
       final pos = await Geolocator.getCurrentPosition(
-              desiredAccuracy: LocationAccuracy.medium)
-          .timeout(const Duration(seconds: 3));
+        desiredAccuracy: LocationAccuracy.medium,
+      ).timeout(const Duration(seconds: 3));
       pickup = LatLng(pos.latitude, pos.longitude);
       mapCenter = pickup!;
       pickupCtl.text = 'Current location';
       if (mounted) {
-        _map.move(mapCenter, 15);
+        _mapController
+            ?.animateCamera(CameraUpdate.newLatLngZoom(mapCenter, 15));
         setState(() {});
       }
     } catch (_) {}
   }
 
-  /* ───────── search helpers ───────── */
   Future<List<_Loc>> _suggest(String q) async {
     if (q.length < 2) return [];
     final uri = Uri.parse(
         'https://nominatim.openstreetmap.org/search?format=json&q=$q&limit=8');
     final res = await http.get(uri, headers: _HEAD);
     if (res.statusCode != 200) return [];
-    return (jsonDecode(res.body) as List)
-        .map((e) => _Loc(e['display_name'],
-            double.parse(e['lat']), double.parse(e['lon'])))
-        .toList();
+    return (jsonDecode(res.body) as List).map((e) {
+      return _Loc(
+          e['display_name'], double.parse(e['lat']), double.parse(e['lon']));
+    }).toList();
   }
 
   Future<void> _choose(_Loc l, {required bool isPickup}) async {
@@ -103,17 +125,15 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
     _route();
   }
 
-  /* ───────── routing + estimate ───────── */
   Future<void> _route() async {
     if (pickup == null || drop == null) return;
     setState(() => _loading = true);
 
-    final uri = Uri.parse(
-        'https://router.project-osrm.org/route/v1/driving/'
+    final uri = Uri.parse('https://router.project-osrm.org/route/v1/driving/'
         '${pickup!.longitude},${pickup!.latitude};'
         '${drop!.longitude},${drop!.latitude}?overview=full&geometries=geojson');
 
-     try {
+    try {
       final res = await http.get(uri).timeout(const Duration(seconds: 6));
       if (res.statusCode == 200) {
         final geo = jsonDecode(res.body);
@@ -121,13 +141,17 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
         routePts = coords.map((c) => LatLng(c[1], c[0])).toList();
         _km = (geo['routes'][0]['distance'] as num) / 1000.0;
 
-        _map.fitCamera(
-          CameraFit.bounds(
-            bounds: LatLngBounds.fromPoints(routePts),
-            padding: const EdgeInsets.all(80),
-            maxZoom: 17,
+        final bounds = LatLngBounds(
+          southwest: LatLng(
+            routePts.map((p) => p.latitude).reduce((a, b) => a < b ? a : b),
+            routePts.map((p) => p.longitude).reduce((a, b) => a < b ? a : b),
+          ),
+          northeast: LatLng(
+            routePts.map((p) => p.latitude).reduce((a, b) => a > b ? a : b),
+            routePts.map((p) => p.longitude).reduce((a, b) => a > b ? a : b),
           ),
         );
+        _mapController?.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
 
         await _estimate();
       }
@@ -139,43 +163,41 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
     if (_km == null) return;
     setState(() => _loading = true);
 
-    // Reverse geocode pickup to get state/city
-  String state = '', city = '';
-  try {
-    final rev = Uri.parse('https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${pickup!.latitude}&lon=${pickup!.longitude}&addressdetails=1');
-    final res = await http.get(rev, headers: _HEAD);
-    if (res.statusCode == 200) {
-      final addr = jsonDecode(res.body)['address'];
-      state = addr['state'] ?? '';
-      city = addr['city'] ?? addr['town'] ?? addr['village'] ?? '';
-    }
-  } catch (_) {}
-  
-   final body = {
-    'state': state,
-    'city': city,
-    'vehicleType': 'bike',
-    'category': 'parcel',
-    'distanceKm': _km,
-    'weight': double.tryParse(weightCtl.text) ?? 0,
-  };
+    String state = '', city = '';
+    try {
+      final rev = Uri.parse(
+          'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${pickup!.latitude}&lon=${pickup!.longitude}&addressdetails=1');
+      final res = await http.get(rev, headers: _HEAD);
+      if (res.statusCode == 200) {
+        final addr = jsonDecode(res.body)['address'];
+        state = addr['state'] ?? '';
+        city = addr['city'] ?? addr['town'] ?? addr['village'] ?? '';
+      }
+    } catch (_) {}
 
- try {
-    final res = await http.post(
-      Uri.parse('$_BASE/api/parcels/estimate'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(body),
-    );
-    if (res.statusCode == 200) {
-      _cost = (jsonDecode(res.body)['cost'] as num).toDouble();
-    }
-  } catch (_) {}
+    final body = {
+      'state': state,
+      'city': city,
+      'vehicleType': 'bike',
+      'category': 'parcel',
+      'distanceKm': _km,
+      'weight': double.tryParse(weightCtl.text) ?? 0,
+    };
 
-  if (mounted) setState(() => _loading = false);
-}
+    try {
+      final res = await http.post(
+        Uri.parse('$_BASE/api/parcels/estimate'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      );
+      if (res.statusCode == 200) {
+        _cost = (jsonDecode(res.body)['cost'] as num).toDouble();
+      }
+    } catch (_) {}
 
+    if (mounted) setState(() => _loading = false);
+  }
 
-  /* ───────── confirm ───────── */
   String? _error() {
     if (pickup == null || drop == null) return 'Select pickup & drop';
     if (_photo == null) return 'Attach parcel photo';
@@ -184,68 +206,66 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
     return null;
   }
 
-Future<void> _confirm() async {
-  final err = _error();
-  if (err != null) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
-    return;
-  }
-
-  setState(() => _loading = true);
-
-  // Use values from `_estimate()` for state and city
-  String state = '', city = '';
-  try {
-    final rev = Uri.parse(
-        'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${pickup!.latitude}&lon=${pickup!.longitude}&addressdetails=1');
-    final res = await http.get(rev, headers: _HEAD);
-    if (res.statusCode == 200) {
-      final addr = jsonDecode(res.body)['address'];
-      state = addr['state'] ?? '';
-      city = addr['city'] ?? addr['town'] ?? addr['village'] ?? '';
+  Future<void> _confirm() async {
+    final err = _error();
+    if (err != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+      return;
     }
-  } catch (_) {}
 
-  final req = http.MultipartRequest(
-    'POST',
-    Uri.parse('$_BASE/api/parcels/create'),
-  )
-    ..fields.addAll({
-      'state': state,
-      'city': city,
-      'vehicleType': 'bike',
-      'category': 'parcel',
-      'distanceKm': _km.toString(),
-      'weight': weightCtl.text,
-      'pickupLat': pickup!.latitude.toString(),
-      'pickupLng': pickup!.longitude.toString(),
-      'dropLat': drop!.latitude.toString(),
-      'dropLng': drop!.longitude.toString(),
-      'receiverName': nameCtl.text.trim(),
-      'receiverPhone': phoneCtl.text.trim(),
-      'notes': notesCtl.text,
-      'payment': _payment,
-    })
-    ..files.add(await http.MultipartFile.fromPath('photo', _photo!.path));
+    setState(() => _loading = true);
 
-  http.StreamedResponse res;
-  try {
-    res = await req.send();
-  } catch (_) {
-    res = http.StreamedResponse(Stream.empty(), 500);
+    String state = '', city = '';
+    try {
+      final rev = Uri.parse(
+          'https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${pickup!.latitude}&lon=${pickup!.longitude}&addressdetails=1');
+      final res = await http.get(rev, headers: _HEAD);
+      if (res.statusCode == 200) {
+        final addr = jsonDecode(res.body)['address'];
+        state = addr['state'] ?? '';
+        city = addr['city'] ?? addr['town'] ?? addr['village'] ?? '';
+      }
+    } catch (_) {}
+
+    final req = http.MultipartRequest(
+      'POST',
+      Uri.parse('$_BASE/api/parcels/create'),
+    )
+      ..fields.addAll({
+        'state': state,
+        'city': city,
+        'vehicleType': 'bike',
+        'category': 'parcel',
+        'distanceKm': _km.toString(),
+        'weight': weightCtl.text,
+        'pickupLat': pickup!.latitude.toString(),
+        'pickupLng': pickup!.longitude.toString(),
+        'dropLat': drop!.latitude.toString(),
+        'dropLng': drop!.longitude.toString(),
+        'receiverName': nameCtl.text.trim(),
+        'receiverPhone': phoneCtl.text.trim(),
+        'notes': notesCtl.text,
+        'payment': _payment,
+      })
+      ..files.add(await http.MultipartFile.fromPath('photo', _photo!.path));
+
+    http.StreamedResponse res;
+    try {
+      res = await req.send();
+    } catch (_) {
+      res = http.StreamedResponse(Stream.empty(), 500);
+    }
+
+    setState(() => _loading = false);
+
+    if (res.statusCode == 201) {
+      final data = jsonDecode(await res.stream.bytesToString());
+      _slip(data);
+    } else {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Booking failed')));
+    }
   }
-
-  setState(() => _loading = false);
-
-  if (res.statusCode == 201) {
-    final data = jsonDecode(await res.stream.bytesToString());
-    _slip(data);
-  } else {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Booking failed')));
-  }
-}
-
 
   void _slip(Map data) {
     showDialog(
@@ -254,13 +274,16 @@ Future<void> _confirm() async {
         title: const Text('Parcel Confirmed'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           _kv('Pickup', pickupCtl.text),
-          _kv('Drop',   dropCtl.text),
+          _kv('Drop', dropCtl.text),
           _kv('Receiver', nameCtl.text),
-          _kv('Phone',    phoneCtl.text),
+          _kv('Phone', phoneCtl.text),
           const Divider(),
           _kv('Cost', '₹ ${data['cost'] ?? _cost ?? '--'}'),
         ]),
-        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context), child: const Text('OK'))
+        ],
       ),
     );
   }
@@ -269,11 +292,13 @@ Future<void> _confirm() async {
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [Text(k), Text(v, style: const TextStyle(fontWeight: FontWeight.bold))],
+          children: [
+            Text(k),
+            Text(v, style: const TextStyle(fontWeight: FontWeight.bold))
+          ],
         ),
       );
 
-  /* ───────── UI ───────── */
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -297,41 +322,16 @@ Future<void> _confirm() async {
     );
   }
 
-  /* ── map ── */
-  Widget _mapWidget() => FlutterMap(
-        mapController: _map,
-        options: MapOptions(
-          initialCenter: mapCenter,   // ← new names
-          initialZoom:   5,
-          maxZoom:       19,
-        ),
-        children: [
-          TileLayer(
-            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            userAgentPackageName: 'com.goindia.app',
-          ),
-          if (pickup != null)
-            MarkerLayer(markers: [
-              Marker(
-                point: pickup!, width: 32, height: 32,
-                child: const Icon(Icons.my_location, color: Colors.green),
-              ),
-            ]),
-          if (drop != null)
-            MarkerLayer(markers: [
-              Marker(
-                point: drop!, width: 32, height: 32,
-                child: const Icon(Icons.flag, color: Colors.red),
-              ),
-            ]),
-          if (routePts.isNotEmpty)
-            PolylineLayer(polylines: [
-              Polyline(points: routePts, strokeWidth: 4, color: Colors.blue),
-            ]),
-        ],
+  Widget _mapWidget() => GoogleMap(
+        initialCameraPosition: CameraPosition(target: mapCenter, zoom: 5),
+        markers: _markers,
+        polylines: _polylines,
+        onMapCreated: (c) => _mapController = c,
+        myLocationEnabled: true,
+        myLocationButtonEnabled: false,
+        zoomControlsEnabled: false,
       );
 
-  /* ── top address card ── */
   Widget _addressCard() => Card(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         child: Padding(
@@ -370,7 +370,9 @@ Future<void> _confirm() async {
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close')),
         ],
       ),
     );
@@ -380,8 +382,8 @@ Future<void> _confirm() async {
           {required bool isPickup}) =>
       TypeAheadField<_Loc>(
         suggestionsCallback: _suggest,
-        itemBuilder: (_, l) =>
-            ListTile(title: Text(l.name, maxLines: 2, overflow: TextOverflow.ellipsis)),
+        itemBuilder: (_, l) => ListTile(
+            title: Text(l.name, maxLines: 2, overflow: TextOverflow.ellipsis)),
         onSelected: (l) {
           c.text = l.name;
           _choose(l, isPickup: isPickup);
@@ -394,20 +396,23 @@ Future<void> _confirm() async {
             decoration: InputDecoration(
               border: const OutlineInputBorder(),
               hintText: hint,
-              prefixIcon: Icon(isPickup ? Icons.my_location : Icons.location_on_outlined),
+              prefixIcon: Icon(
+                  isPickup ? Icons.my_location : Icons.location_on_outlined),
             ),
           );
         },
       );
 
-  /* ── bottom sheet ── */
   Widget _sheet(ScrollController sc) => ListView(
         controller: sc,
         padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
         children: [
           Center(
-              child: Container(width: 40, height: 4,
-                  decoration: BoxDecoration(color: Colors.grey[300],
+              child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                      color: Colors.grey[300],
                       borderRadius: BorderRadius.circular(3)))),
           const SizedBox(height: 12),
           TextField(
