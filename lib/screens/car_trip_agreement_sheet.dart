@@ -27,7 +27,6 @@ class CarTripAgreementSheet extends StatelessWidget {
             Text('Go India — Long‑Trip (Car Trip) Agreement',
                 style: textTheme.titleMedium, textAlign: TextAlign.center),
             const SizedBox(height: 12),
-
             Expanded(
               child: SingleChildScrollView(
                 child: Text(
@@ -49,7 +48,6 @@ By tapping *Accept* you agree to these terms.
                 ),
               ),
             ),
-
             const SizedBox(height: 12),
             Row(
               children: [
@@ -63,10 +61,13 @@ By tapping *Accept* you agree to these terms.
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () {
-                      Navigator.pop(context);          // close sheet
+                      Navigator.pop(context); // close sheet
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => const CarTripBookingPage()),
+                        MaterialPageRoute(
+                            builder: (_) => const LongTripPage(
+                                  customerId: '',
+                                )),
                       );
                     },
                     child: const Text('Accept'),

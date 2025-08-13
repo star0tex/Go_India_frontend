@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
+import 'package:http_parser/http_parser.dart'; // Add this import
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
@@ -14,6 +15,7 @@ import 'package:sliding_up_panel/sliding_up_panel.dart';
 const _BASE = 'http://192.168.210.12:5002';
 const _HEAD = {'User-Agent': 'GoIndiaApp'}; // Nominatim politeness
 
+/* ─── tiny model ─── */
 class _Loc {
   _Loc(this.name, this.lat, this.lon);
   final String name;
@@ -21,13 +23,17 @@ class _Loc {
   final double lon;
 }
 
+/* ─── page ─── */
 class ParcelLocationPage extends StatefulWidget {
-  const ParcelLocationPage({super.key});
+  final String customerId;
+  const ParcelLocationPage({super.key, required this.customerId});
+
   @override
   State<ParcelLocationPage> createState() => _ParcelLocationPageState();
 }
 
 class _ParcelLocationPageState extends State<ParcelLocationPage> {
+  /* text controllers */
   final pickupCtl = TextEditingController();
   final dropCtl = TextEditingController();
   final houseCtl = TextEditingController();
@@ -36,50 +42,23 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
   final weightCtl = TextEditingController();
   final notesCtl = TextEditingController();
 
-  GoogleMapController? _mapController;
+  /* map */
+  final MapController _map = MapController();
   LatLng mapCenter = const LatLng(20.5937, 78.9629);
   LatLng? pickup, drop;
   List<LatLng> routePts = [];
 
+  /* state */
   double? _km, _cost;
-  bool _loading = false;
+  bool _loading = false; // ← single flag
   File? _photo;
   String _payment = 'Prepaid';
   bool _useMyContact = false;
 
+  /* favourites */
   final favs = <String, _Loc>{};
 
-  Set<Marker> get _markers {
-    final markers = <Marker>{};
-    if (pickup != null) {
-      markers.add(Marker(
-        markerId: const MarkerId('pickup'),
-        position: pickup!,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-      ));
-    }
-    if (drop != null) {
-      markers.add(Marker(
-        markerId: const MarkerId('drop'),
-        position: drop!,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-      ));
-    }
-    return markers;
-  }
-
-  Set<Polyline> get _polylines {
-    if (routePts.isEmpty) return {};
-    return {
-      Polyline(
-        polylineId: const PolylineId('route'),
-        color: Colors.blue,
-        width: 4,
-        points: routePts,
-      )
-    };
-  }
-
+  /* ───────── init ───────── */
   @override
   void initState() {
     super.initState();
@@ -89,29 +68,29 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
   Future<void> _initGPS() async {
     try {
       final pos = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.medium,
-      ).timeout(const Duration(seconds: 3));
+              desiredAccuracy: LocationAccuracy.medium)
+          .timeout(const Duration(seconds: 3));
       pickup = LatLng(pos.latitude, pos.longitude);
       mapCenter = pickup!;
       pickupCtl.text = 'Current location';
       if (mounted) {
-        _mapController
-            ?.animateCamera(CameraUpdate.newLatLngZoom(mapCenter, 15));
+        _map.move(mapCenter, 15);
         setState(() {});
       }
     } catch (_) {}
   }
 
+  /* ───────── search helpers ───────── */
   Future<List<_Loc>> _suggest(String q) async {
     if (q.length < 2) return [];
     final uri = Uri.parse(
         'https://nominatim.openstreetmap.org/search?format=json&q=$q&limit=8');
     final res = await http.get(uri, headers: _HEAD);
     if (res.statusCode != 200) return [];
-    return (jsonDecode(res.body) as List).map((e) {
-      return _Loc(
-          e['display_name'], double.parse(e['lat']), double.parse(e['lon']));
-    }).toList();
+    return (jsonDecode(res.body) as List)
+        .map((e) => _Loc(
+            e['display_name'], double.parse(e['lat']), double.parse(e['lon'])))
+        .toList();
   }
 
   Future<void> _choose(_Loc l, {required bool isPickup}) async {
@@ -125,6 +104,40 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
     _route();
   }
 
+  Future<void> postParcelTrip({
+    required String customerId,
+    required Map<String, dynamic> pickup,
+    required Map<String, dynamic> drop,
+    required String vehicleType,
+    required Map<String, dynamic> parcelDetails,
+  }) async {
+    final url = Uri.parse('$_BASE/api/parcels/create');
+
+    final response = await http.post(
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        "customerId": widget.customerId,
+        "pickup": pickup,
+        "drop": drop,
+        "vehicleType": vehicleType,
+        "parcelDetails": parcelDetails,
+      }),
+    );
+
+    final data = jsonDecode(response.body);
+    print('📦 Parcel Trip Response: $data');
+
+    if (response.statusCode == 200 && data["success"]) {
+      // success
+    } else {
+      // handle error
+    }
+  }
+
+  /* ───────── routing + estimate ───────── */
   Future<void> _route() async {
     if (pickup == null || drop == null) return;
     setState(() => _loading = true);
@@ -141,17 +154,13 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
         routePts = coords.map((c) => LatLng(c[1], c[0])).toList();
         _km = (geo['routes'][0]['distance'] as num) / 1000.0;
 
-        final bounds = LatLngBounds(
-          southwest: LatLng(
-            routePts.map((p) => p.latitude).reduce((a, b) => a < b ? a : b),
-            routePts.map((p) => p.longitude).reduce((a, b) => a < b ? a : b),
-          ),
-          northeast: LatLng(
-            routePts.map((p) => p.latitude).reduce((a, b) => a > b ? a : b),
-            routePts.map((p) => p.longitude).reduce((a, b) => a > b ? a : b),
+        _map.fitCamera(
+          CameraFit.bounds(
+            bounds: LatLngBounds.fromPoints(routePts),
+            padding: const EdgeInsets.all(80),
+            maxZoom: 17,
           ),
         );
-        _mapController?.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
 
         await _estimate();
       }
@@ -163,6 +172,7 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
     if (_km == null) return;
     setState(() => _loading = true);
 
+    // Reverse geocode pickup to get state/city
     String state = '', city = '';
     try {
       final rev = Uri.parse(
@@ -198,6 +208,7 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
     if (mounted) setState(() => _loading = false);
   }
 
+  /* ───────── confirm ───────── */
   String? _error() {
     if (pickup == null || drop == null) return 'Select pickup & drop';
     if (_photo == null) return 'Attach parcel photo';
@@ -215,6 +226,7 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
 
     setState(() => _loading = true);
 
+    // Use values from `_estimate()` for state and city
     String state = '', city = '';
     try {
       final rev = Uri.parse(
@@ -247,8 +259,12 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
         'notes': notesCtl.text,
         'payment': _payment,
       })
-      ..files.add(await http.MultipartFile.fromPath('photo', _photo!.path));
-
+      ..files.add(await http.MultipartFile.fromPath(
+        'parcelPhoto',
+        _photo!.path,
+        contentType:
+            MediaType('image', 'jpeg'), // or 'png' if your image is PNG
+      ));
     http.StreamedResponse res;
     try {
       res = await req.send();
@@ -260,6 +276,7 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
 
     if (res.statusCode == 201) {
       final data = jsonDecode(await res.stream.bytesToString());
+
       _slip(data);
     } else {
       ScaffoldMessenger.of(context)
@@ -299,6 +316,7 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
         ),
       );
 
+  /* ───────── UI ───────── */
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -322,16 +340,45 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
     );
   }
 
-  Widget _mapWidget() => GoogleMap(
-        initialCameraPosition: CameraPosition(target: mapCenter, zoom: 5),
-        markers: _markers,
-        polylines: _polylines,
-        onMapCreated: (c) => _mapController = c,
-        myLocationEnabled: true,
-        myLocationButtonEnabled: false,
-        zoomControlsEnabled: false,
+  /* ── map ── */
+  Widget _mapWidget() => FlutterMap(
+        mapController: _map,
+        options: MapOptions(
+          initialCenter: mapCenter, // ← new names
+          initialZoom: 5,
+          maxZoom: 19,
+        ),
+        children: [
+          TileLayer(
+            urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+            userAgentPackageName: 'com.goindia.app',
+          ),
+          if (pickup != null)
+            MarkerLayer(markers: [
+              Marker(
+                point: pickup!,
+                width: 32,
+                height: 32,
+                child: const Icon(Icons.my_location, color: Colors.green),
+              ),
+            ]),
+          if (drop != null)
+            MarkerLayer(markers: [
+              Marker(
+                point: drop!,
+                width: 32,
+                height: 32,
+                child: const Icon(Icons.flag, color: Colors.red),
+              ),
+            ]),
+          if (routePts.isNotEmpty)
+            PolylineLayer(polylines: [
+              Polyline(points: routePts, strokeWidth: 4, color: Colors.blue),
+            ]),
+        ],
       );
 
+  /* ── top address card ── */
   Widget _addressCard() => Card(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         child: Padding(
@@ -403,6 +450,7 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
         },
       );
 
+  /* ── bottom sheet ── */
   Widget _sheet(ScrollController sc) => ListView(
         controller: sc,
         padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),

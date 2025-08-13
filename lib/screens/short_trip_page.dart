@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 import 'package:http/http.dart' as http;
 import 'package:flutter_typeahead/flutter_typeahead.dart';
@@ -10,10 +9,24 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_place/google_place.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/socket_service.dart';
+import 'package:flutter/foundation.dart';
+import 'dart:async';
+
+// ✅ Centralized constants
+const String googleApiKey = 'AIzaSyCqfjktNhxjKfM-JmpSwBk9KtgY429QWY8';
+const List<String> invalidHistoryTerms = ['auto', 'bike', 'car'];
+const Map<String, String> vehicleAssets = {
+  'bike': 'assets/images/bike.png',
+  'auto': 'assets/images/auto.png',
+  'car': 'assets/images/car.png',
+  'premium': 'assets/images/Primium.png',
+  'xl': 'assets/images/xl.png',
+};
 
 class OpenStreetLocationPage extends StatefulWidget {
   const OpenStreetLocationPage(
       {super.key, this.initialDrop = '', this.selectedVehicle});
+
   final String initialDrop;
   final String? selectedVehicle;
 
@@ -28,14 +41,14 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
   final dropController = TextEditingController();
   late final stt.SpeechToText _speech;
   bool _isListening = false;
-  LatLng? pickupPoint;
-  LatLng? dropPoint;
-  LatLng mapCenter = const LatLng(17.3850, 78.4867);
+  gmaps.LatLng? pickupPoint;
+  gmaps.LatLng? dropPoint;
+  gmaps.LatLng mapCenter = const gmaps.LatLng(17.3850, 78.4867);
 
   // Add these at the top of _OpenStreetLocationPageState:
 
   // ✅ ADDED: Google Maps controller
-  GoogleMapController? _googleMapController;
+  gmaps.GoogleMapController? _googleMapController;
   final Set<gmaps.Marker> _markers = {};
   final List<gmaps.LatLng> _routePoints = [];
 
@@ -51,22 +64,31 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
   String? selectedVehicle;
   String _pickupState = '';
   String _pickupCity = '';
+  Timer? _debounce;
+  int _currentScreen = 1; // 1 = Booking Screen, 2 = Map Screen
+  final FocusNode pickupFocusNode = FocusNode();
+  final FocusNode dropFocusNode = FocusNode();
 
   @override
   void initState() {
     super.initState();
-    SocketService().connectCustomer();
+
+    final socketService = SocketService();
+    socketService
+        .connect('http://192.168.210.12:5002'); // your backend socket URL
+    socketService.connectCustomer(); // auto uses Firebase phone/UID
+
     _speech = stt.SpeechToText();
     selectedVehicle = widget.selectedVehicle;
+    _setCurrentLocation();
     _bootstrap();
 
-    // Listen for driver responses
-    SocketService().onRideAccepted((data) {
+    socketService.onTripAccepted((data) {
       print('✅ Driver accepted ride: $data');
-      // You can navigate to a ride-tracking screen later here
+      // navigate to ride tracking if needed
     });
 
-    SocketService().onRideRejected((data) {
+    socketService.onRideRejected((data) {
       print('❌ Driver rejected ride: $data');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No drivers accepted your ride')),
@@ -75,9 +97,9 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
   }
 
   Future<void> _bootstrap() async {
-    await _setCurrentLocation();
     await _loadHistory();
     await _clearBadHistory();
+    await _setCurrentLocation();
 
     if (widget.initialDrop.isNotEmpty) {
       dropController.text = widget.initialDrop;
@@ -118,7 +140,7 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
     try {
       final pos = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high);
-      final current = LatLng(pos.latitude, pos.longitude);
+      final current = gmaps.LatLng(pos.latitude, pos.longitude);
       final locData = await _reverseGeocode(current);
 
       setState(() {
@@ -133,7 +155,7 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
       // ✅ Updated to use GoogleMapController
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _googleMapController?.animateCamera(
-          CameraUpdate.newLatLngZoom(current, 15),
+          gmaps.CameraUpdate.newLatLngZoom(current, 15),
         );
       });
     } catch (e) {
@@ -145,7 +167,7 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
     final url = Uri.parse(
       'https://maps.googleapis.com/maps/api/geocode/json'
       '?latlng=${latLng.latitude},${latLng.longitude}'
-      '&key=AIzaSyCqfjktNhxjKfM-JmpSwBk9KtgY429QWY8', // Replace this
+      '&key=$googleApiKey', // ✅ Updated
     );
 
     final res = await http.get(url);
@@ -165,9 +187,7 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
 
     for (var c in components) {
       final types = List<String>.from(c['types']);
-      if (types.contains('administrative_area_level_1')) {
-        state = c['long_name'];
-      }
+      if (types.contains('administrative_area_level_1')) state = c['long_name'];
       if (types.contains('locality') || types.contains('sublocality')) {
         city = c['long_name'];
       }
@@ -178,6 +198,37 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
       'state': state,
       'city': city,
     };
+  }
+
+  void _searchLocationFromCoordinates(LocationResult loc,
+      {required bool isPickup}) async {
+    final point = gmaps.LatLng(loc.latitude, loc.longitude);
+    final locData = await _reverseGeocode(point);
+
+    setState(() {
+      mapCenter = point;
+      _markers.removeWhere(
+          (m) => m.markerId.value == (isPickup ? 'pickup' : 'drop'));
+      _markers.add(_buildMarker(point, isPickup: isPickup));
+
+      if (isPickup) {
+        pickupPoint = point;
+        _pickupState = locData['state']!;
+        _pickupCity = locData['city']!;
+        pickupController.text = locData['displayName']!;
+      } else {
+        dropPoint = point;
+        dropController.text = locData['displayName']!;
+      }
+
+      _addToHistory(loc.displayName);
+    });
+
+    if (pickupPoint != null && dropPoint != null) {
+      await _drawRoute();
+    } else {
+      _googleMapController?.animateCamera(gmaps.CameraUpdate.newLatLng(point));
+    }
   }
 
   void _searchLocation(String query, {required bool isPickup}) async {
@@ -210,7 +261,10 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
     if (pickupPoint != null && dropPoint != null) {
       await _drawRoute();
     } else {
-      _googleMapController?.animateCamera(CameraUpdate.newLatLng(point));
+      _googleMapController?.animateCamera(gmaps.CameraUpdate.newLatLng(point));
+    }
+    if (!isPickup) {
+      setState(() => _currentScreen = 2);
     }
   }
 
@@ -251,13 +305,20 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
       'https://maps.googleapis.com/maps/api/directions/json'
       '?origin=${pickupPoint!.latitude},${pickupPoint!.longitude}'
       '&destination=${dropPoint!.latitude},${dropPoint!.longitude}'
-      '&key=AIzaSyCqfjktNhxjKfM-JmpSwBk9KtgY429QWY8',
+      '&key=$googleApiKey',
     );
 
     final res = await http.get(url);
     if (res.statusCode != 200) return;
 
     final data = jsonDecode(res.body);
+
+    // ✅ Add this check BEFORE accessing routes[0]
+    if (data['routes'] == null || data['routes'].isEmpty) {
+      debugPrint('⚠ No routes found');
+      return;
+    }
+
     final route = data['routes'][0];
     final overviewPolyline = route['overview_polyline']['points'];
     final distance = route['legs'][0]['distance']['value'] / 1000.0;
@@ -270,8 +331,14 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
       _durationSec = duration;
     });
 
-    await _fetchFares(apiBase); // ✅ This will work
+    await _fetchFares(apiBase);
     _fitMapToBounds();
+  }
+
+  Future<List<gmaps.LatLng>> fetchRoutePolyline(
+      gmaps.LatLng start, gmaps.LatLng end) async {
+    // TODO: integrate with your existing route API or Google Directions
+    return [start, end]; // temporary straight line until proper implementation
   }
 
   void _fitMapToBounds() {
@@ -292,7 +359,7 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
 
     final bounds = gmaps.LatLngBounds(southwest: sw, northeast: ne);
     _googleMapController?.animateCamera(
-      CameraUpdate.newLatLngBounds(bounds, 80),
+      gmaps.CameraUpdate.newLatLngBounds(bounds, 80),
     );
   }
 
@@ -323,11 +390,13 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
           }),
         );
 
-        debugPrint('🚕 Fetching fare for: $v');
-        debugPrint(
-            'Request: state=$_pickupState, city=$_pickupCity, distance=$_distanceKm, duration=${_durationSec! / 60.0}');
-        debugPrint('Response Status: ${res.statusCode}');
-        debugPrint('Response Body: ${res.body}');
+        if (kDebugMode) {
+          debugPrint('🚕 Fetching fare for: $v');
+          debugPrint(
+              'Request: state=$_pickupState, city=$_pickupCity, distance=$_distanceKm, duration=${_durationSec! / 60.0}');
+          debugPrint('Response Status: ${res.statusCode}');
+          debugPrint('Response Body: ${res.body}');
+        }
 
         if (res.statusCode == 200) {
           final json = jsonDecode(res.body);
@@ -359,16 +428,14 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
     final sp = await SharedPreferences.getInstance();
     _history.removeWhere((h) {
       final lower = h.toLowerCase();
-      return lower.contains('auto') ||
-          lower.contains('bike') ||
-          lower.contains('car');
+      return invalidHistoryTerms.contains(lower);
     });
     await sp.setStringList(_historyKey, _history);
   }
 
   void _addToHistory(String place) {
     final lower = place.toLowerCase();
-    if (['auto', 'bike', 'car'].contains(lower)) return; // ✅ prevent pollution
+    if (invalidHistoryTerms.contains(lower)) return; // ✅ Cleaned
 
     if (_history.contains(place)) _history.remove(place);
     _history.insert(0, place);
@@ -396,10 +463,11 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
     _speech.listen(onResult: (r) {
       if (r.finalResult) {
         final txt = r.recognizedWords.trim();
-        final invalid = ['auto', 'bike', 'car'];
-        if (!invalid.contains(txt.toLowerCase()) && txt.length > 3) {
+        if (!invalidHistoryTerms.contains(txt.toLowerCase()) &&
+            txt.length > 3) {
           dropController.text = txt;
           _searchLocation(txt, isPickup: false);
+          setState(() => _currentScreen = 2);
         }
       }
     });
@@ -408,29 +476,47 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
   Future<List<LocationResult>> _suggestions(String pattern) async {
     if (pattern.trim().length < 2) return [];
 
-    final nearby = pickupPoint ?? dropPoint ?? mapCenter;
-    final remote =
-        await GooglePlaceHelper.autocomplete(pattern, center: nearby);
-    final hist = _history
-        .where((h) {
-          final lower = h.toLowerCase();
-          return !['auto', 'bike', 'car'].contains(lower) &&
-              h.toLowerCase().startsWith(pattern.toLowerCase());
-        })
-        .map((h) => LocationResult(latitude: 0, longitude: 0, displayName: h))
-        .toList();
+    // Debounce API calls
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    final completer = Completer<List<LocationResult>>();
 
-    final merged = <String, LocationResult>{};
-    for (var r in [...hist, ...remote]) {
-      merged[r.displayName] = r;
-    }
-    return merged.values.toList();
+    _debounce = Timer(const Duration(milliseconds: 200), () async {
+      try {
+        final nearby = pickupPoint ?? dropPoint ?? mapCenter;
+
+        // Show history first
+        final localMatches = _history
+            .where((h) => h.toLowerCase().contains(pattern.toLowerCase()))
+            .map((h) =>
+                LocationResult(latitude: 0, longitude: 0, displayName: h))
+            .toList();
+
+        // Fetch Google suggestions in parallel
+        final results =
+            await GooglePlaceHelper.autocomplete(pattern, center: nearby);
+
+        // Merge history + API results (no duplicates)
+        final merged = [
+          ...localMatches,
+          ...results.where(
+              (r) => !localMatches.any((h) => h.displayName == r.displayName)),
+        ];
+
+        completer.complete(merged);
+      } catch (e) {
+        debugPrint("❌ Suggestions error: $e");
+        completer.complete([]);
+      }
+    });
+
+    return completer.future;
   }
 
   Widget _buildSearchField({
     required TextEditingController controller,
     required String hint,
     required bool isPickup,
+    FocusNode? focusNode, // ✅ added
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -450,9 +536,19 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
         itemBuilder: (_, s) => ListTile(
           title: Text(s.displayName, style: const TextStyle(fontSize: 14)),
         ),
-        onSelected: (s) {
+        onSelected: (s) async {
           controller.text = s.displayName;
-          _searchLocation(s.displayName, isPickup: isPickup);
+          // ✅ Fetch full details only on selection
+          final loc = await GooglePlaceHelper.search(s.displayName);
+          if (loc != null) {
+            _searchLocationFromCoordinates(loc, isPickup: isPickup);
+            if (!isPickup) {
+              setState(() {
+                _currentScreen = 2;
+              });
+              _drawRoute(); // ✅ New method to redraw route
+            }
+          }
         },
         emptyBuilder: (_) => const Padding(
           padding: EdgeInsets.all(8),
@@ -544,12 +640,7 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
               }).map((v) {
                 if (!_vehicleFares.containsKey(v)) return const SizedBox();
 
-                String asset = 'assets/images/${v.toLowerCase()}.png';
-                if (v == 'bike') asset = 'assets/images/bike.png';
-                if (v == 'auto') asset = 'assets/images/auto.png';
-                if (v == 'car') asset = 'assets/images/car.png';
-                if (v == 'premium') asset = 'assets/images/Primium.png';
-                if (v == 'xl') asset = 'assets/images/xl.png';
+                String asset = vehicleAssets[v]!;
 
                 return GestureDetector(
                   onTap: () {
@@ -644,69 +735,182 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
     );
   }
 
-  void _onMapCreated(GoogleMapController controller) {
+  void _onMapCreated(gmaps.GoogleMapController controller) {
     _googleMapController = controller;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Stack(
+      body: IndexedStack(
+        index: _currentScreen == 1 ? 0 : 1,
         children: [
-          GoogleMap(
-            onMapCreated: _onMapCreated,
-            initialCameraPosition: CameraPosition(
-              target: mapCenter,
-              zoom: 15,
-            ),
-            markers: Set<Marker>.of(_markers),
-            polylines: _routePoints.isNotEmpty
-                ? {
-                    Polyline(
-                      polylineId: const PolylineId('route'),
-                      points: _routePoints,
-                      width: 4,
-                      color: Colors.blue,
-                    )
-                  }
-                : {},
-            myLocationEnabled: true,
-            myLocationButtonEnabled: true,
-          ),
-
-          // 🔍 Search Fields and History Overlay
-          Positioned(
-            top: 40,
-            left: 20,
-            right: 20,
-            child: Column(
-              children: [
-                _buildSearchField(
-                  controller: pickupController,
-                  hint: 'Enter pickup location',
-                  isPickup: true,
-                ),
-                const SizedBox(height: 10),
-                _buildSearchField(
-                  controller: dropController,
-                  hint: 'Enter drop location',
-                  isPickup: false,
-                ),
-                const SizedBox(height: 10),
-                _buildLocalHistory(), // ✅ Inserted local history list
-              ],
-            ),
-          ),
-
-          // 🟢 Fare panel
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: _bottomPanel(),
-          ),
+          _buildBookingScreen(),
+          _buildMapScreen(),
         ],
       ),
+    );
+  }
+
+  Widget _buildBookingScreen() {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Book a Ride",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            const Text("Where would you like to go?",
+                style: TextStyle(color: Colors.grey)),
+
+            const SizedBox(height: 16),
+
+            // Pickup and Drop Fields
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 4)],
+              ),
+              child: Column(
+                children: [
+                  _buildSearchField(
+                    controller: pickupController,
+                    hint: "Current location",
+                    isPickup: true,
+                  ),
+                  const SizedBox(height: 8),
+                  _buildSearchField(
+                    controller: dropController,
+                    hint: "Where to?",
+                    isPickup: false,
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 20),
+
+            const Text("Recent Rides",
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+
+            const SizedBox(height: 8),
+
+            Expanded(
+              child: _history.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: const [
+                          Icon(Icons.history, size: 40, color: Colors.grey),
+                          SizedBox(height: 8),
+                          Text("No recent rides",
+                              style: TextStyle(color: Colors.grey)),
+                          Text("Your ride history will appear here",
+                              style:
+                                  TextStyle(color: Colors.grey, fontSize: 12)),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: _history.length,
+                      itemBuilder: (context, index) {
+                        final place = _history[index];
+                        return ListTile(
+                          leading: const Icon(Icons.history),
+                          title: Text(place),
+                          onTap: () {
+                            dropController.text = place;
+                            setState(() => _currentScreen = 2);
+                            _searchLocation(place, isPickup: false);
+                          },
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMapScreen() {
+    return Stack(
+      children: [
+        gmaps.GoogleMap(
+          onMapCreated: _onMapCreated,
+          initialCameraPosition: gmaps.CameraPosition(
+            target: mapCenter,
+            zoom: 15,
+          ),
+          markers: Set<gmaps.Marker>.of(_markers),
+          polylines: _routePoints.isNotEmpty
+              ? {
+                  gmaps.Polyline(
+                    polylineId: const gmaps.PolylineId('route'),
+                    points: _routePoints,
+                    width: 4,
+                    color: Colors.blue,
+                  )
+                }
+              : {},
+          myLocationEnabled: true,
+          myLocationButtonEnabled: true,
+        ),
+
+        // Pickup and Drop bars
+        Positioned(
+          top: 40,
+          left: 20,
+          right: 20,
+          child: Column(
+            children: [
+              GestureDetector(
+                onTap: () {
+                  setState(() => _currentScreen = 1);
+                  Future.delayed(const Duration(milliseconds: 100), () {
+                    FocusScope.of(context).requestFocus(pickupFocusNode);
+                  });
+                },
+                child: _buildSearchField(
+                  controller: pickupController,
+                  focusNode: pickupFocusNode, // ✅ add this
+                  hint: "Pickup location",
+                  isPickup: true,
+                ),
+              ),
+              const SizedBox(height: 10),
+              GestureDetector(
+                onTap: () {
+                  setState(() => _currentScreen = 1);
+                  Future.delayed(const Duration(milliseconds: 100), () {
+                    FocusScope.of(context).requestFocus(dropFocusNode);
+                  });
+                },
+                child: _buildSearchField(
+                  controller: dropController,
+                  focusNode: dropFocusNode, // ✅ add this
+                  hint: "Drop location",
+                  isPickup: false,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Fare Panel
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: _bottomPanel(),
+        ),
+      ],
     );
   }
 
@@ -806,22 +1010,23 @@ class GooglePlaceHelper {
   }
 
   static Future<List<LocationResult>> autocomplete(String input,
-      {LatLng? center}) async {
+      {gmaps.LatLng? center}) async {
     final predictions = await _place.autocomplete.get(
       input,
       location:
           center != null ? LatLon(center.latitude, center.longitude) : null,
-      radius: 20000, // optional
+      radius: 20000,
     );
 
     if (predictions?.predictions == null) return [];
 
-    return predictions!.predictions!
-        .map((p) => LocationResult(
-              latitude: 0, // will be filled after selecting
-              longitude: 0,
-              displayName: p.description ?? '',
-            ))
-        .toList();
+    // ✅ Only use predictions first (faster, no details call yet)
+    return predictions!.predictions!.map((p) {
+      return LocationResult(
+        latitude: 0, // Will fetch later on selection
+        longitude: 0,
+        displayName: p.description ?? '',
+      );
+    }).toList();
   }
 }

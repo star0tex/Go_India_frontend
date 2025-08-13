@@ -1,55 +1,88 @@
+// lib/pages/car_trip_booking_page.dart
+
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart' as gmap;
+import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:flutter_typeahead/flutter_typeahead.dart';
 import 'package:http/http.dart' as http;
+import 'package:socket_io_client/socket_io_client.dart' as io;
 
-/* ───────────────────────────────────────────────────────────── */
+class LongTripPage extends StatefulWidget {
+  final String customerId;
+  const LongTripPage({super.key, required this.customerId});
 
-class CarTripBookingPage extends StatefulWidget {
-  const CarTripBookingPage({super.key});
   @override
-  State<CarTripBookingPage> createState() => _CarTripBookingPageState();
+  State<LongTripPage> createState() => _CarTripBookingPageState();
 }
 
-class _CarTripBookingPageState extends State<CarTripBookingPage> {
+class _CarTripBookingPageState extends State<LongTripPage> {
   final pickupCtl = TextEditingController();
   final dropCtl = TextEditingController();
   final dateCtl = TextEditingController();
   final daysCtl = TextEditingController(text: '1');
 
-  gmap.GoogleMapController? mapCtl;
-  gmap.LatLng? pickup, drop;
-  final List<gmap.LatLng> routePts = [];
-  gmap.LatLng mapCenter = const gmap.LatLng(20.5937, 78.9629);
+  final MapController mapCtl = MapController();
+  LatLng? pickup, drop;
+  final List<LatLng> routePts = [];
+  LatLng mapCenter = const LatLng(20.5937, 78.9629);
 
   static const vehicles = ['car', 'premium', 'xl'];
   String selectedVehicle = 'car';
   bool _oneWay = false;
   double? _distanceKm, _durationMin;
+
   bool _routing = false;
   bool _loadingFare = false;
 
-  Set<gmap.Marker> markers = {};
-  Set<gmap.Polyline> polylines = {};
+  final String apiBase = 'http://192.168.210.12:5002';
+  late io.Socket _socket;
 
   @override
   void initState() {
     super.initState();
     _initLocation();
+    _initSocket();
+  }
+
+  void _initSocket() {
+    try {
+      _socket = io.io(
+        apiBase,
+        <String, dynamic>{
+          'transports': ['websocket'],
+          'autoConnect': true,
+        },
+      );
+
+      _socket.onConnect((_) {
+        print('🟢 Customer socket connected');
+        _socket.emit('customer:register', {'customerId': widget.customerId});
+      });
+
+      _socket.onDisconnect((_) {
+        print('🔴 Customer socket disconnected');
+      });
+
+      _socket.onError((err) {
+        print('⚠️ Customer socket error: $err');
+      });
+    } catch (e) {
+      print('⚠️ Failed to init socket: $e');
+    }
   }
 
   Future<void> _initLocation() async {
     Position? pos = await Geolocator.getLastKnownPosition();
     pos ??= await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high);
-    pickup = gmap.LatLng(pos.latitude, pos.longitude);
+    pickup = LatLng(pos.latitude, pos.longitude);
     mapCenter = pickup!;
     pickupCtl.text = 'Current location';
     setState(() {});
-    mapCtl?.moveCamera(gmap.CameraUpdate.newLatLngZoom(mapCenter, 15));
+    mapCtl.move(mapCenter, 15);
   }
 
   Future<List<_Loc>> _suggest(String q) async {
@@ -69,11 +102,10 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
   }
 
   Future<void> _selectLoc(_Loc loc, {required bool isPickup}) async {
-    final point = gmap.LatLng(loc.lat, loc.lon);
     if (isPickup) {
-      pickup = point;
+      pickup = LatLng(loc.lat, loc.lon);
     } else {
-      drop = point;
+      drop = LatLng(loc.lat, loc.lon);
     }
     await _updateRoute();
   }
@@ -84,8 +116,8 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
 
     final start = '${pickup!.longitude},${pickup!.latitude}';
     final end = '${drop!.longitude},${drop!.latitude}';
-    final uri = Uri.parse(
-        'https://router.project-osrm.org/route/v1/driving/$start;$end?overview=full&geometries=geojson');
+    final uri = Uri.parse('https://router.project-osrm.org/route/v1/driving/'
+        '$start;$end?overview=full&geometries=geojson');
 
     final res = await http.get(uri);
     if (res.statusCode == 200) {
@@ -93,71 +125,28 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
       final coords = data['routes'][0]['geometry']['coordinates'] as List;
       routePts
         ..clear()
-        ..addAll(coords.map((c) => gmap.LatLng(c[1], c[0])));
+        ..addAll(coords.map((c) => LatLng(c[1], c[0])));
       _distanceKm = (data['routes'][0]['distance'] as num) / 1000.0;
       _durationMin = (data['routes'][0]['duration'] as num) / 60.0;
     }
 
     setState(() => _routing = false);
-    _renderMapElements();
     _fitBounds();
   }
 
-  void _renderMapElements() {
-    markers.clear();
-    polylines.clear();
-
-    if (pickup != null) {
-      markers.add(gmap.Marker(
-        markerId: const gmap.MarkerId("pickup"),
-        position: pickup!,
-        icon: gmap.BitmapDescriptor.defaultMarkerWithHue(
-            gmap.BitmapDescriptor.hueGreen),
-      ));
-    }
-
-    if (drop != null) {
-      markers.add(gmap.Marker(
-        markerId: const gmap.MarkerId("drop"),
-        position: drop!,
-        icon: gmap.BitmapDescriptor.defaultMarkerWithHue(
-            gmap.BitmapDescriptor.hueRed),
-      ));
-    }
-
-    if (routePts.isNotEmpty) {
-      polylines.add(gmap.Polyline(
-        polylineId: const gmap.PolylineId('route'),
-        points: routePts,
-        color: Colors.blue,
-        width: 4,
-      ));
-    }
-  }
-
   void _fitBounds() {
-    if (routePts.isEmpty || mapCtl == null) return;
-    final bounds = _boundsFromLatLngList(routePts);
-    mapCtl!.animateCamera(gmap.CameraUpdate.newLatLngBounds(bounds, 80));
-  }
-
-  gmap.LatLngBounds _boundsFromLatLngList(List<gmap.LatLng> list) {
-    double x0 = list.first.latitude;
-    double x1 = list.first.latitude;
-    double y0 = list.first.longitude;
-    double y1 = list.first.longitude;
-
-    for (final latLng in list) {
-      if (latLng.latitude < x0) x0 = latLng.latitude;
-      if (latLng.latitude > x1) x1 = latLng.latitude;
-      if (latLng.longitude < y0) y0 = latLng.longitude;
-      if (latLng.longitude > y1) y1 = latLng.longitude;
-    }
-
-    return gmap.LatLngBounds(
-      southwest: gmap.LatLng(x0, y0),
-      northeast: gmap.LatLng(x1, y1),
-    );
+    if (routePts.isEmpty) return;
+    final bounds = LatLngBounds.fromPoints(routePts);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      mapCtl.fitCamera(
+        CameraFit.bounds(
+          bounds: bounds,
+          padding: const EdgeInsets.all(80),
+          maxZoom: 17,
+        ),
+      );
+    });
   }
 
   Future<void> _fetchAndShowFare(String vehicle) async {
@@ -169,7 +158,7 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
 
     setState(() => _loadingFare = true);
     try {
-      final uri = Uri.parse('http://192.168.210.12:5002/api/fares/calc');
+      final uri = Uri.parse('$apiBase/api/fares/calc');
       final body = {
         'state': 'telangana',
         'city': 'hyderabad',
@@ -190,7 +179,7 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         if (!mounted) return;
-        _showFareSheet(vehicle, data);
+        _showFareSheet(vehicle.toLowerCase(), data);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Backend error ${res.statusCode}')));
@@ -200,6 +189,55 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
           .showSnackBar(SnackBar(content: Text('Error: $e')));
     } finally {
       if (mounted) setState(() => _loadingFare = false);
+    }
+  }
+
+  Future<void> postLongTrip({
+    required String customerId,
+    required Map<String, dynamic> pickup,
+    required Map<String, dynamic> drop,
+    required String vehicleType,
+    required bool isSameDay,
+    required int tripDays,
+    required bool returnTrip,
+  }) async {
+    final url = Uri.parse('$apiBase/api/trips/long');
+
+    final response = await http.post(
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        "customerId": customerId,
+        "pickup": pickup,
+        "drop": drop,
+        "vehicleType": vehicleType.toLowerCase(),
+        "isSameDay": isSameDay,
+        "tripDays": tripDays,
+        "returnTrip": returnTrip,
+        "tripDate": dateCtl.text, // Or ISO format
+      }),
+    );
+
+    final data = jsonDecode(response.body);
+    print('🔁 Long Trip Response: $data');
+
+    if (response.statusCode == 200 &&
+        data["success"] &&
+        data['tripId'] != null) {
+      final tripId = data['tripId'];
+      print('📤 Trip created ($tripId) — emitting customer:request_trip');
+      try {
+        _socket.emit('customer:request_trip', {'tripId': tripId});
+      } catch (e) {
+        print('⚠️ Socket emit failed: $e');
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Failed to create trip. Please try again.')),
+      );
     }
   }
 
@@ -248,10 +286,48 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
                 width: double.infinity,
                 height: 48,
                 child: ElevatedButton(
-                  onPressed: () {
+                  onPressed: () async {
+                    if (pickup == null || drop == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text(
+                              'Please select both pickup and drop locations.')));
+                      return;
+                    }
+                    if (widget.customerId.isEmpty) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                          content: Text('Login required. Please re-login.')));
+                      return;
+                    }
+
+                    final pickupData = {
+                      "address": pickupCtl.text,
+                      "coordinates": [
+                        pickup!.latitude,
+                        pickup!.longitude
+                      ], // ✅ Correct order
+                    };
+                    final dropData = {
+                      "address": dropCtl.text,
+                      "coordinates": [
+                        drop!.latitude,
+                        drop!.longitude
+                      ], // ✅ Correct order
+                    };
+
+                    await postLongTrip(
+                      customerId: widget.customerId,
+                      pickup: pickupData,
+                      drop: dropData,
+                      vehicleType: selectedVehicle,
+                      isSameDay: true,
+                      tripDays: int.tryParse(daysCtl.text) ?? 1,
+                      returnTrip: !_oneWay,
+                    );
+
+                    if (!mounted) return;
                     Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Trip confirmed!')));
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                        content: Text('Trip confirmed and sent to backend.')));
                   },
                   child: const Text('Confirm Trip'),
                 ),
@@ -281,33 +357,13 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
       body: Column(
         children: [
           _topForm(),
-          _googleMap(),
+          _map(),
           _vehicleRow(),
           if (_loadingFare) const LinearProgressIndicator(minHeight: 2),
         ],
       ),
     );
   }
-
-  Widget _googleMap() => Expanded(
-        child: Stack(
-          children: [
-            gmap.GoogleMap(
-              initialCameraPosition:
-                  gmap.CameraPosition(target: mapCenter, zoom: 15),
-              onMapCreated: (c) => mapCtl = c,
-              markers: markers,
-              polylines: polylines,
-              myLocationEnabled: true,
-              myLocationButtonEnabled: true,
-              zoomControlsEnabled: false,
-            ),
-            if (_routing)
-              const Positioned.fill(
-                  child: Center(child: CircularProgressIndicator())),
-          ],
-        ),
-      );
 
   Widget _topForm() => Padding(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
@@ -379,6 +435,52 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
         ),
       );
 
+  Widget _map() => Expanded(
+        child: Stack(
+          children: [
+            FlutterMap(
+              mapController: mapCtl,
+              options: MapOptions(
+                initialCenter: mapCenter,
+                initialZoom: 15,
+                maxZoom: 19,
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.goindia.app',
+                ),
+                if (pickup != null)
+                  MarkerLayer(markers: [
+                    Marker(
+                        point: pickup!,
+                        width: 28,
+                        height: 28,
+                        child:
+                            const Icon(Icons.location_on, color: Colors.green)),
+                  ]),
+                if (drop != null)
+                  MarkerLayer(markers: [
+                    Marker(
+                        point: drop!,
+                        width: 28,
+                        height: 28,
+                        child: const Icon(Icons.flag, color: Colors.red)),
+                  ]),
+                if (routePts.isNotEmpty)
+                  PolylineLayer(polylines: [
+                    Polyline(
+                        points: routePts, strokeWidth: 4, color: Colors.blue),
+                  ]),
+              ],
+            ),
+            if (_routing)
+              const Positioned.fill(
+                  child: Center(child: CircularProgressIndicator())),
+          ],
+        ),
+      );
+
   Widget _vehicleRow() => Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         color: Colors.white,
@@ -442,6 +544,18 @@ class _CarTripBookingPageState extends State<CarTripBookingPage> {
           );
         },
       );
+
+  @override
+  void dispose() {
+    try {
+      _socket.dispose();
+    } catch (_) {}
+    pickupCtl.dispose();
+    dropCtl.dispose();
+    dateCtl.dispose();
+    daysCtl.dispose();
+    super.dispose();
+  }
 }
 
 class _Loc {

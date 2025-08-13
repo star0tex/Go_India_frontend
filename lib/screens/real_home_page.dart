@@ -223,10 +223,11 @@ class _RealHomePageState extends State<RealHomePage>
                         Navigator.pop(ctx);
                         if (data['label'] == 'Parcel') {
                           Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                      builder: (_) => ParcelLocationPage()))
-                              .then((_) => _fetchUserProfile());
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => ParcelLocationPage(
+                                        customerId: '',
+                                      ))).then((_) => _fetchUserProfile());
                         } else if (data['label'] == 'Car Trip') {
                           showModalBottomSheet(
                             context: ctx,
@@ -529,8 +530,11 @@ class _RealHomePageState extends State<RealHomePage>
       onTap: () {
         if (label == 'Parcel') {
           Navigator.push(
-                  ctx, MaterialPageRoute(builder: (_) => ParcelLocationPage()))
-              .then((_) => _fetchUserProfile());
+              ctx,
+              MaterialPageRoute(
+                  builder: (_) => ParcelLocationPage(
+                        customerId: '',
+                      ))).then((_) => _fetchUserProfile());
         } else if (label == 'Car Trip') {
           showModalBottomSheet(
             context: ctx,

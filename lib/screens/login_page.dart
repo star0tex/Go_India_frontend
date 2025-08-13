@@ -6,6 +6,7 @@ import 'package:jwt_decoder/jwt_decoder.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'home_page.dart';
 import 'real_home_page.dart';
@@ -81,6 +82,11 @@ class _LoginPageState extends State<LoginPage> {
         final data = json.decode(res.body);
         final isNewUser = data["newUser"] == true;
 
+        // ✅ Store customerId for later use
+        if (data["userId"] != null) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString("customerId", data["userId"]);
+        }
         if (!isNewUser) {
           _showError("Welcome back! 👋");
         }
