@@ -15,7 +15,9 @@ import 'ride_history_page.dart';
 //import 'safety_page.dart';
 
 class RealHomePage extends StatefulWidget {
-  const RealHomePage({super.key});
+  final String customerId; // <-- Add this
+
+  const RealHomePage({super.key, required this.customerId});
 
   @override
   State<RealHomePage> createState() => _RealHomePageState();
@@ -54,6 +56,8 @@ class _RealHomePageState extends State<RealHomePage>
   @override
   void initState() {
     super.initState();
+      _checkOldUser();
+
     _speech = stt.SpeechToText();
     _controllers = List.generate(
       services.length,
@@ -85,10 +89,25 @@ class _RealHomePageState extends State<RealHomePage>
     _loadLocationHistory();
   }
 
+  void _checkOldUser() async {
+  SharedPreferences prefs = await SharedPreferences.getInstance();
+  bool? isOldUser = prefs.getBool('isOldUser');
+
+  if (isOldUser == true) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Welcome back, old user!"),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    });
+  }
+}
   Future<void> _fetchUserProfile() async {
     try {
       final res = await http
-          .get(Uri.parse('http://192.168.210.12:5002/api/user/$phone'));
+          .get(Uri.parse('http://192.168.190.33:5002/api/user/$phone'));
       if (res.statusCode == 200) {
         final user = json.decode(res.body)['user'];
         setState(() {
@@ -226,7 +245,7 @@ class _RealHomePageState extends State<RealHomePage>
                               context,
                               MaterialPageRoute(
                                   builder: (_) => ParcelLocationPage(
-                                        customerId: '',
+                                        customerId: widget.customerId,
                                       ))).then((_) => _fetchUserProfile());
                         } else if (data['label'] == 'Car Trip') {
                           showModalBottomSheet(
@@ -237,7 +256,7 @@ class _RealHomePageState extends State<RealHomePage>
                               borderRadius: BorderRadius.vertical(
                                   top: Radius.circular(24)),
                             ),
-                            builder: (_) => const CarTripAgreementSheet(),
+                            builder: (_) => CarTripAgreementSheet(customerId: widget.customerId),
                           ).then((_) => _fetchUserProfile());
                         } else {
                           selectedVehicle = data['label']!.toLowerCase();
@@ -533,7 +552,7 @@ class _RealHomePageState extends State<RealHomePage>
               ctx,
               MaterialPageRoute(
                   builder: (_) => ParcelLocationPage(
-                        customerId: '',
+                        customerId: widget.customerId,
                       ))).then((_) => _fetchUserProfile());
         } else if (label == 'Car Trip') {
           showModalBottomSheet(
@@ -543,7 +562,7 @@ class _RealHomePageState extends State<RealHomePage>
             shape: const RoundedRectangleBorder(
               borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
-            builder: (_) => const CarTripAgreementSheet(),
+            builder: (_) => CarTripAgreementSheet(customerId: widget.customerId),
           ).then((_) => _fetchUserProfile());
         } else {
           selectedVehicle = label.toLowerCase();
@@ -681,7 +700,7 @@ class _RealHomePageState extends State<RealHomePage>
               Navigator.push(
                 ctx,
                 MaterialPageRoute(
-                    builder: (_) => const ParcelLiveTrackingPage()),
+                    builder: (_) => ParcelLiveTrackingPage(customerId: widget.customerId)),
               );
             },
           ),

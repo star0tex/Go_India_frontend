@@ -1,12 +1,19 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:go_china1/screens/car_trip_booking_page.dart';
 import 'package:http/http.dart' as http;
 import 'package:google_fonts/google_fonts.dart';
 import 'real_home_page.dart';
 
 class HomePage extends StatefulWidget {
   final String phone;
-  const HomePage({super.key, required this.phone});
+  final String customerId; // <-- Add this
+
+  const HomePage({
+    super.key,
+    required this.phone,
+    required this.customerId,
+  });
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -28,7 +35,7 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    const String apiUrl = 'http://192.168.210.12:5002/api/user';
+    const String apiUrl = 'http://192.168.190.33:5002/api/user';
 
     try {
       final payload = {
@@ -45,13 +52,21 @@ class _HomePageState extends State<HomePage> {
 
       final successCodes = {200, 201, 400};
       if (successCodes.contains(response.statusCode)) {
-        final msg = jsonDecode(response.body)['message'] ?? 'Profile saved.';
-        _showToast(msg);
-        if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const RealHomePage()),
-        );
+final responseData = jsonDecode(response.body);
+final msg = responseData['message'] ?? 'Profile saved.';
+_showToast(msg);
+if (!mounted) return;
+final userId = responseData['user']?['_id'] ?? responseData['userId'];
+if (userId != null) {
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => LongTripPage(customerId: userId), // userId should be MongoDB _id
+    ),
+  );
+} else {
+  _showToast('User ID not found in response.', isError: true);
+}
       } else {
         _showToast('Failed: ${response.body}', isError: true);
       }
@@ -228,3 +243,4 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 }
+

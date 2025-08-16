@@ -12,7 +12,7 @@ import 'package:flutter_typeahead/flutter_typeahead.dart';
 import 'package:sliding_up_panel/sliding_up_panel.dart';
 
 /* ─── config ─── */
-const _BASE = 'http://192.168.210.12:5002';
+const _BASE = 'http://192.168.190.33:5002';
 const _HEAD = {'User-Agent': 'GoIndiaApp'}; // Nominatim politeness
 
 /* ─── tiny model ─── */

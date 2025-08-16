@@ -4,7 +4,8 @@ import 'car_trip_booking_page.dart';
 /// A modal sheet that explains the long‑trip rules.
 /// Call it with  showModalBottomSheet(context:…, builder: (_) => CarTripAgreementSheet());
 class CarTripAgreementSheet extends StatelessWidget {
-  const CarTripAgreementSheet({super.key});
+  final String customerId;
+  const CarTripAgreementSheet({super.key, required this.customerId});
 
   @override
   Widget build(BuildContext context) {
@@ -65,8 +66,8 @@ By tapping *Accept* you agree to these terms.
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                            builder: (_) => const LongTripPage(
-                                  customerId: '',
+                            builder: (_) => LongTripPage(
+                                  customerId: customerId,
                                 )),
                       );
                     },

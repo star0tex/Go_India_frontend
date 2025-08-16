@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 //import 'package:geolocator/geolocator.dart';
 
+/* ─── config ─── */
+const _BASE = 'http://192.168.190.33:5002';
+
 class ParcelLiveTrackingPage extends StatefulWidget {
-  const ParcelLiveTrackingPage({super.key});
+  final String customerId;
+  const ParcelLiveTrackingPage({super.key, required this.customerId});
 
   @override
   State<ParcelLiveTrackingPage> createState() => _ParcelLiveTrackingPageState();
@@ -28,11 +34,41 @@ class _ParcelLiveTrackingPageState extends State<ParcelLiveTrackingPage> {
   }
 
   Future<void> _fetchDriverLocation() async {
-    // Simulating driver's current location; replace with real-time updates
-    await Future.delayed(const Duration(seconds: 1));
-    setState(() {
-      driverLocation = const LatLng(17.385044, 78.486671); // Hyderabad example
-    });
+    // Use customerId to fetch the driver's location from the server
+    try {
+      final response = await http.get(
+        Uri.parse('$_BASE/api/parcels/tracking/${widget.customerId}'),
+        headers: {'Content-Type': 'application/json'},
+      );
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] && data['location'] != null) {
+          setState(() {
+            driverLocation = LatLng(
+              data['location']['latitude'], 
+              data['location']['longitude']
+            );
+          });
+        } else {
+          // Fallback to default location if no data available
+          setState(() {
+            driverLocation = const LatLng(17.385044, 78.486671); // Hyderabad example
+          });
+        }
+      } else {
+        // Fallback to default location on error
+        setState(() {
+          driverLocation = const LatLng(17.385044, 78.486671); // Hyderabad example
+        });
+      }
+    } catch (e) {
+      print('Error fetching driver location: $e');
+      // Fallback to default location on error
+      setState(() {
+        driverLocation = const LatLng(17.385044, 78.486671); // Hyderabad example
+      });
+    }
   }
 
   @override
