@@ -57,7 +57,7 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
   static const _historyKey = 'location_history';
   List<String> _history = [];
 
-  final String apiBase = 'http://192.168.190.33:5002'; // Your backend IP
+  final String apiBase = 'http://192.168.43.3:5002'; // Your backend IP
   final List<String> vehicles = ['bike', 'auto', 'car', 'premium', 'xl'];
   final Map<String, double> _vehicleFares = {};
   bool _loadingFares = false;
@@ -75,7 +75,7 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
 
     final socketService = SocketService();
     socketService
-        .connect('http://192.168.190.33:5002'); // your backend socket URL
+        .connect('http://192.168.43.3:5002'); // your backend socket URL
     socketService.connectCustomer(); // auto uses Firebase phone/UID
 
     _speech = stt.SpeechToText();

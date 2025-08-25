@@ -158,6 +158,15 @@ class SocketService {
     });
   }
 
+  void onRideConfirmed(void Function(Map<String, dynamic> data) handler) {
+    _socket?.off('rideConfirmed');
+    _socket?.on('rideConfirmed', (data) {
+      final map = _toMap(data);
+      print('✅ rideConfirmed -> $map');
+      handler(map);
+    });
+  }
+
   // ========= Utilities =========
   void emit(String event, Map<String, dynamic> data) {
     _socket?.emit(event, data);

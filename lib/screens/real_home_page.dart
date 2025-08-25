@@ -107,7 +107,7 @@ class _RealHomePageState extends State<RealHomePage>
   Future<void> _fetchUserProfile() async {
     try {
       final res = await http
-          .get(Uri.parse('http://192.168.190.33:5002/api/user/$phone'));
+          .get(Uri.parse('http://192.168.43.3:5002/api/user/$phone'));
       if (res.statusCode == 200) {
         final user = json.decode(res.body)['user'];
         setState(() {
