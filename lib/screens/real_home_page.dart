@@ -56,7 +56,7 @@ class _RealHomePageState extends State<RealHomePage>
   @override
   void initState() {
     super.initState();
-      _checkOldUser();
+    _checkOldUser();
 
     _speech = stt.SpeechToText();
     _controllers = List.generate(
@@ -90,24 +90,25 @@ class _RealHomePageState extends State<RealHomePage>
   }
 
   void _checkOldUser() async {
-  SharedPreferences prefs = await SharedPreferences.getInstance();
-  bool? isOldUser = prefs.getBool('isOldUser');
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    bool? isOldUser = prefs.getBool('isOldUser');
 
-  if (isOldUser == true) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Welcome back, old user!"),
-          duration: Duration(seconds: 3),
-        ),
-      );
-    });
+    if (isOldUser == true) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Welcome back, old user!"),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      });
+    }
   }
-}
+
   Future<void> _fetchUserProfile() async {
     try {
       final res = await http
-          .get(Uri.parse('http://192.168.43.3:5002/api/user/$phone'));
+          .get(Uri.parse('http://192.168.15.12:5002/api/user/$phone'));
       if (res.statusCode == 200) {
         final user = json.decode(res.body)['user'];
         setState(() {
@@ -256,7 +257,8 @@ class _RealHomePageState extends State<RealHomePage>
                               borderRadius: BorderRadius.vertical(
                                   top: Radius.circular(24)),
                             ),
-                            builder: (_) => CarTripAgreementSheet(customerId: widget.customerId),
+                            builder: (_) => CarTripAgreementSheet(
+                                customerId: widget.customerId),
                           ).then((_) => _fetchUserProfile());
                         } else {
                           selectedVehicle = data['label']!.toLowerCase();
@@ -562,7 +564,8 @@ class _RealHomePageState extends State<RealHomePage>
             shape: const RoundedRectangleBorder(
               borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
-            builder: (_) => CarTripAgreementSheet(customerId: widget.customerId),
+            builder: (_) =>
+                CarTripAgreementSheet(customerId: widget.customerId),
           ).then((_) => _fetchUserProfile());
         } else {
           selectedVehicle = label.toLowerCase();
@@ -700,7 +703,8 @@ class _RealHomePageState extends State<RealHomePage>
               Navigator.push(
                 ctx,
                 MaterialPageRoute(
-                    builder: (_) => ParcelLiveTrackingPage(customerId: widget.customerId)),
+                    builder: (_) =>
+                        ParcelLiveTrackingPage(customerId: widget.customerId)),
               );
             },
           ),

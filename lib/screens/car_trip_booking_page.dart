@@ -37,7 +37,7 @@ class _CarTripBookingPageState extends State<LongTripPage> {
   bool _routing = false;
   bool _loadingFare = false;
 
-  final String apiBase = 'http://192.168.43.3:5002';
+  final String apiBase = 'http://192.168.15.12:5002';
   late io.Socket _socket;
 
   @override
@@ -57,11 +57,12 @@ class _CarTripBookingPageState extends State<LongTripPage> {
         },
       );
 
-     _socket.onConnect((_) {
-    print('🟢 Customer socket connected');
-    if (widget.customerId.isNotEmpty) {
-      _socket.emit('customer:register', {'customerId': widget.customerId});
-    }});
+      _socket.onConnect((_) {
+        print('🟢 Customer socket connected');
+        if (widget.customerId.isNotEmpty) {
+          _socket.emit('customer:register', {'customerId': widget.customerId});
+        }
+      });
 
       _socket.onDisconnect((_) {
         print('🔴 Customer socket disconnected');

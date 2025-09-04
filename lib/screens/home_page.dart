@@ -35,7 +35,7 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    const String apiUrl = 'http://192.168.43.3:5002/api/user';
+    const String apiUrl = 'http://192.168.15.12:5002/api/user';
 
     try {
       final payload = {
@@ -52,21 +52,22 @@ class _HomePageState extends State<HomePage> {
 
       final successCodes = {200, 201, 400};
       if (successCodes.contains(response.statusCode)) {
-final responseData = jsonDecode(response.body);
-final msg = responseData['message'] ?? 'Profile saved.';
-_showToast(msg);
-if (!mounted) return;
-final userId = responseData['user']?['_id'] ?? responseData['userId'];
-if (userId != null) {
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (context) => LongTripPage(customerId: userId), // userId should be MongoDB _id
-    ),
-  );
-} else {
-  _showToast('User ID not found in response.', isError: true);
-}
+        final responseData = jsonDecode(response.body);
+        final msg = responseData['message'] ?? 'Profile saved.';
+        _showToast(msg);
+        if (!mounted) return;
+        final userId = responseData['user']?['_id'] ?? responseData['userId'];
+        if (userId != null) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => LongTripPage(
+                  customerId: userId), // userId should be MongoDB _id
+            ),
+          );
+        } else {
+          _showToast('User ID not found in response.', isError: true);
+        }
       } else {
         _showToast('Failed: ${response.body}', isError: true);
       }
@@ -243,4 +244,3 @@ if (userId != null) {
     super.dispose();
   }
 }
-

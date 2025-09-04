@@ -28,94 +28,94 @@ class _LoginPageState extends State<LoginPage> {
   bool _autoVerified = false;
 
   Future<void> _routeUser(String phoneOnly) async {
-  final user = FirebaseAuth.instance.currentUser;
-  if (user == null) {
-    _showError("Login failed. Firebase user is null.");
-    return;
-  }
-
-  _showLoadingDialog();
-
-  String token = await user.getIdToken() ?? '';
-  if (token.isEmpty) {
-    Navigator.pop(context);
-    _showError("Token is empty.");
-    return;
-  }
-
-  int attempts = 0;
-  bool tokenValid = false;
-
-  while (attempts < 10) {
-    try {
-      final decoded = JwtDecoder.decode(token);
-      if (decoded.containsKey("phone_number") || decoded.containsKey("uid")) {
-        tokenValid = true;
-        break;
-      }
-    } catch (_) {}
-
-    await Future.delayed(const Duration(seconds: 1));
-    token = await user.getIdToken(true) ?? '';
-    attempts++;
-  }
-
-  if (!tokenValid) {
-    Navigator.pop(context);
-    _showError("Login failed. Please try again.");
-    return;
-  }
-
-  try {
-    final res = await http.post(
-      Uri.parse("http://192.168.43.3:5002/api/auth/firebase-login"),
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer $token",
-      },
-      body: jsonEncode({"phone": "+91$phoneOnly"}),
-    );
-
-    Navigator.pop(context);
-
-    if (res.statusCode == 200) {
-      final data = json.decode(res.body);
-      print("Server response: $data"); // Debug log
-
-      final isNewUser = data["newUser"] == true;
-      String customerId = (data["userId"] ?? "").toString();
-
-      // ✅ If server doesn't send customerId, use phoneOnly
-      if (customerId.isEmpty) {
-        print("⚠ No customerId from server, using phone number instead.");
-        customerId = phoneOnly;
-      }
-
-      // Store in SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString("customerId", customerId);
-
-      if (!isNewUser) {
-        _showError("Welcome back! 👋");
-      }
-
-      final Widget next = isNewUser
-          ? HomePage(phone: phoneOnly, customerId: customerId)
-          : RealHomePage(customerId: customerId);
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => next),
-      );
-      print("Navigation triggered to: $next");
-    } else {
-      _showError("Login failed: ${res.body}");
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _showError("Login failed. Firebase user is null.");
+      return;
     }
-  } catch (e) {
-    Navigator.pop(context);
-    _showError("Connection error: $e");
+
+    _showLoadingDialog();
+
+    String token = await user.getIdToken() ?? '';
+    if (token.isEmpty) {
+      Navigator.pop(context);
+      _showError("Token is empty.");
+      return;
+    }
+
+    int attempts = 0;
+    bool tokenValid = false;
+
+    while (attempts < 10) {
+      try {
+        final decoded = JwtDecoder.decode(token);
+        if (decoded.containsKey("phone_number") || decoded.containsKey("uid")) {
+          tokenValid = true;
+          break;
+        }
+      } catch (_) {}
+
+      await Future.delayed(const Duration(seconds: 1));
+      token = await user.getIdToken(true) ?? '';
+      attempts++;
+    }
+
+    if (!tokenValid) {
+      Navigator.pop(context);
+      _showError("Login failed. Please try again.");
+      return;
+    }
+
+    try {
+      final res = await http.post(
+        Uri.parse("http://192.168.15.12:5002/api/auth/firebase-login"),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer $token",
+        },
+        body: jsonEncode({"phone": "+91$phoneOnly"}),
+      );
+
+      Navigator.pop(context);
+
+      if (res.statusCode == 200) {
+        final data = json.decode(res.body);
+        print("Server response: $data"); // Debug log
+
+        final isNewUser = data["newUser"] == true;
+        String customerId = (data["userId"] ?? "").toString();
+
+        // ✅ If server doesn't send customerId, use phoneOnly
+        if (customerId.isEmpty) {
+          print("⚠ No customerId from server, using phone number instead.");
+          customerId = phoneOnly;
+        }
+
+        // Store in SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString("customerId", customerId);
+
+        if (!isNewUser) {
+          _showError("Welcome back! 👋");
+        }
+
+        final Widget next = isNewUser
+            ? HomePage(phone: phoneOnly, customerId: customerId)
+            : RealHomePage(customerId: customerId);
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => next),
+        );
+        print("Navigation triggered to: $next");
+      } else {
+        _showError("Login failed: ${res.body}");
+      }
+    } catch (e) {
+      Navigator.pop(context);
+      _showError("Connection error: $e");
+    }
   }
-}
 
   Future<void> _sendOTP() async {
     await FirebaseAuth.instance.signOut();

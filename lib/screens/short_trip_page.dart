@@ -1,19 +1,725 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 import 'package:http/http.dart' as http;
-import 'package:flutter_typeahead/flutter_typeahead.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:google_place/google_place.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/socket_service.dart';
-import 'package:flutter/foundation.dart';
 import 'dart:async';
+import 'package:flutter_typeahead/flutter_typeahead.dart';
+
+// --- Constants ---
+const String googleApiKey = 'AIzaSyCqfjktNhxjKfM-JmpSwBk9KtgY429QWY8';
+const Map<String, String> vehicleAssetsV2 = {
+  'bike': 'assets/images/bike.png',
+  'auto': 'assets/images/auto.png',
+  'car': 'assets/images/car.png',
+  'premium': 'assets/images/Primium.png',
+  'xl': 'assets/images/xl.png',
+};
+const List<String> vehicleLabels = ['bike', 'auto', 'car', 'premium', 'xl'];
+const String historyKey = 'short_trip_history';
+
+// --- Main Page ---
+class ShortTripPage extends StatefulWidget {
+  final String? selectedVehicle; // If user tapped vehicle label
+  const ShortTripPage({Key? key, this.selectedVehicle}) : super(key: key);
+  @override
+  State<ShortTripPage> createState() => _ShortTripPageState();
+}
+
+class _ShortTripPageState extends State<ShortTripPage> {
+  // --- Controllers & State ---
+  final pickupController = TextEditingController();
+  final dropController = TextEditingController();
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  bool isListening = false;
+  int pageIndex = 0; // 0: input, 1: map
+  String? selectedVehicle;
+  List<String> history = [];
+  List<LocationResult> suggestions = [];
+  Map<String, double> fares = {};
+  bool loadingFares = false;
+  gmaps.LatLng? pickupPoint;
+  gmaps.LatLng? dropPoint;
+  List<gmaps.LatLng> routePoints = [];
+  double? durationSec;
+  double? distanceKm;
+  gmaps.GoogleMapController? mapController;
+  String pickupAddress = '';
+  String dropAddress = '';
+  String pickupState = '';
+  String pickupCity = '';
+  Timer? _debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    selectedVehicle = widget.selectedVehicle;
+    _initLocation();
+    _loadHistory();
+  }
+
+  @override
+  void dispose() {
+    pickupController.dispose();
+    dropController.dispose();
+    _speech.stop();
+    super.dispose();
+  }
+
+  // --- Location & Geocoding ---
+  Future<void> _initLocation() async {
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) return;
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) return;
+      final pos = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high);
+      final latLng = gmaps.LatLng(pos.latitude, pos.longitude);
+      pickupPoint = latLng;
+      final locData = await _reverseGeocode(latLng);
+      pickupAddress = locData['displayName'] ?? 'Current Location';
+      pickupState = locData['state'] ?? '';
+      pickupCity = locData['city'] ?? '';
+      pickupController.text = pickupAddress;
+      setState(() {});
+    } catch (e) {
+      pickupController.text = 'Current Location';
+    }
+  }
+
+  Future<Map<String, String>> _reverseGeocode(gmaps.LatLng latLng) async {
+    final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/geocode/json?latlng=${latLng.latitude},${latLng.longitude}&key=$googleApiKey');
+    final res = await http.get(url);
+    if (res.statusCode != 200)
+      return {'displayName': 'Current Location', 'state': '', 'city': ''};
+    final data = jsonDecode(res.body);
+    final results = data['results'];
+    if (results == null || results.isEmpty)
+      return {'displayName': 'Current Location', 'state': '', 'city': ''};
+    String state = '', city = '';
+    final components = results[0]['address_components'] as List;
+    for (var c in components) {
+      final types = List<String>.from(c['types']);
+      if (types.contains('administrative_area_level_1')) state = c['long_name'];
+      if (types.contains('locality') || types.contains('sublocality'))
+        city = c['long_name'];
+    }
+    return {
+      'displayName': results[0]['formatted_address'],
+      'state': state,
+      'city': city,
+    };
+  }
+
+  // --- History ---
+  Future<void> _loadHistory() async {
+    final sp = await SharedPreferences.getInstance();
+    final user = FirebaseAuth.instance.currentUser;
+    final key = user != null ? '$historyKey:${user.phoneNumber}' : historyKey;
+    setState(() {
+      history = sp.getStringList(key) ?? [];
+    });
+  }
+
+  Future<void> _saveHistory(String drop) async {
+    final sp = await SharedPreferences.getInstance();
+    final user = FirebaseAuth.instance.currentUser;
+    final key = user != null ? '$historyKey:${user.phoneNumber}' : historyKey;
+    final h = List<String>.from(history);
+    h.remove(drop);
+    h.insert(0, drop);
+    if (h.length > 15) h.removeLast();
+    setState(() {
+      history = h;
+    });
+    await sp.setStringList(key, h);
+  }
+
+  // --- Suggestions ---
+  Future<void> _fetchSuggestions(String pattern) async {
+    if (pattern.trim().length < 2) {
+      setState(() {
+        suggestions = [];
+      });
+      return;
+    }
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 250), () async {
+      final nearby = pickupPoint ?? gmaps.LatLng(17.3850, 78.4867);
+      final results =
+          await GooglePlaceHelper.autocomplete(pattern, center: nearby);
+      setState(() {
+        suggestions = results;
+      });
+    });
+  }
+
+  // --- Speech ---
+  Future<void> _toggleMic() async {
+    if (isListening) {
+      await _speech.stop();
+      setState(() => isListening = false);
+      return;
+    }
+    final ok = await _speech.initialize(onStatus: (s) {
+      if (s == 'done') setState(() => isListening = false);
+    }, onError: (e) {
+      setState(() => isListening = false);
+    });
+    if (!ok) return;
+    setState(() => isListening = true);
+    _speech.listen(onResult: (r) {
+      if (r.finalResult) {
+        dropController.text = r.recognizedWords.trim();
+        _fetchSuggestions(dropController.text);
+      }
+    });
+  }
+
+  // --- Location Selection ---
+  Future<void> _selectLocation(String query, {required bool isPickup}) async {
+    final loc = await GooglePlaceHelper.search(query);
+    if (loc == null) return;
+    final point = gmaps.LatLng(loc.latitude, loc.longitude);
+    if (isPickup) {
+      pickupPoint = point;
+      pickupAddress = loc.displayName;
+      pickupController.text = loc.displayName;
+      final geo = await _reverseGeocode(point);
+      pickupState = geo['state'] ?? '';
+      pickupCity = geo['city'] ?? '';
+      setState(() {});
+    } else {
+      dropPoint = point;
+      dropAddress = loc.displayName;
+      dropController.text = loc.displayName;
+      await _saveHistory(loc.displayName);
+      setState(() {
+        pageIndex = 1;
+      });
+      await _drawRoute();
+    }
+  }
+
+  // --- Route & Fare ---
+  Future<void> _drawRoute() async {
+    if (pickupPoint == null || dropPoint == null) return;
+    final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/directions/json?origin=${pickupPoint!.latitude},${pickupPoint!.longitude}&destination=${dropPoint!.latitude},${dropPoint!.longitude}&key=$googleApiKey');
+    final res = await http.get(url);
+    if (res.statusCode != 200) return;
+    final data = jsonDecode(res.body);
+    if (data['routes'] == null || data['routes'].isEmpty) return;
+    final route = data['routes'][0];
+    final overviewPolyline = route['overview_polyline']['points'];
+    final distance = route['legs'][0]['distance']['value'] / 1000.0;
+    final duration = route['legs'][0]['duration']['value'].toDouble();
+    setState(() {
+      routePoints = _decodePolyline(overviewPolyline);
+      distanceKm = distance;
+      durationSec = duration;
+    });
+    await _fetchFares();
+    _fitMapToBounds();
+  }
+
+  List<gmaps.LatLng> _decodePolyline(String encoded) {
+    List<gmaps.LatLng> points = [];
+    int index = 0, len = encoded.length;
+    int lat = 0, lng = 0;
+    while (index < len) {
+      int b, shift = 0, result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlat = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lat += dlat;
+      shift = 0;
+      result = 0;
+      do {
+        b = encoded.codeUnitAt(index++) - 63;
+        result |= (b & 0x1f) << shift;
+        shift += 5;
+      } while (b >= 0x20);
+      int dlng = ((result & 1) != 0 ? ~(result >> 1) : (result >> 1));
+      lng += dlng;
+      points.add(gmaps.LatLng(lat / 1E5, lng / 1E5));
+    }
+    return points;
+  }
+
+  void _fitMapToBounds() {
+    if (pickupPoint == null || dropPoint == null || mapController == null)
+      return;
+    final sw = gmaps.LatLng(
+        [pickupPoint!.latitude, dropPoint!.latitude]
+            .reduce((a, b) => a < b ? a : b),
+        [pickupPoint!.longitude, dropPoint!.longitude]
+            .reduce((a, b) => a < b ? a : b));
+    final ne = gmaps.LatLng(
+        [pickupPoint!.latitude, dropPoint!.latitude]
+            .reduce((a, b) => a > b ? a : b),
+        [pickupPoint!.longitude, dropPoint!.longitude]
+            .reduce((a, b) => a > b ? a : b));
+    final bounds = gmaps.LatLngBounds(southwest: sw, northeast: ne);
+    mapController!
+        .animateCamera(gmaps.CameraUpdate.newLatLngBounds(bounds, 80));
+  }
+
+  Future<void> _fetchFares() async {
+    if (distanceKm == null ||
+        durationSec == null ||
+        pickupState.isEmpty ||
+        pickupCity.isEmpty) return;
+    setState(() => loadingFares = true);
+    final apiBase = 'http://192.168.15.12:5002';
+    final Map<String, double> result = {};
+    for (final v in vehicleLabels) {
+      if (selectedVehicle != null && selectedVehicle != v) continue;
+      try {
+        final res = await http.post(
+          Uri.parse('$apiBase/api/fares/calc'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'state': pickupState,
+            'city': pickupCity,
+            'vehicleType': v,
+            'category': 'short',
+            'distanceKm': distanceKm,
+            'durationMin': durationSec! / 60.0,
+          }),
+        );
+        if (res.statusCode == 200) {
+          final json = jsonDecode(res.body);
+          result[v] = (json['total'] as num).toDouble();
+        }
+      } catch (_) {}
+    }
+    setState(() {
+      fares = result;
+      loadingFares = false;
+    });
+  }
+
+  // --- Confirm Ride ---
+  Future<void> _confirmRide() async {
+    if (pickupPoint == null || dropPoint == null || selectedVehicle == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Please select pickup, drop, and vehicle')));
+      return;
+    }
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('User not logged in')));
+      return;
+    }
+    final rideData = {
+      "pickupLat": pickupPoint!.latitude,
+      "pickupLng": pickupPoint!.longitude,
+      "pickupAddress": pickupAddress,
+      "dropLat": dropPoint!.latitude,
+      "dropLng": dropPoint!.longitude,
+      "dropAddress": dropAddress,
+      "selectedVehicleType": selectedVehicle,
+      "userId": user.phoneNumber,
+    };
+    SocketService().sendRideRequest(rideData);
+    await _saveHistory(dropAddress);
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Ride request sent!')));
+    // Navigate or show waiting page as needed
+  }
+
+  // --- UI ---
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 350),
+        child: pageIndex == 0 ? _buildInputScreen() : _buildMapScreen(),
+      ),
+    );
+  }
+
+  Widget _buildInputScreen() {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Book a Ride",
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            const Text("Where would you like to go?",
+                style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 16),
+            _inputBar(),
+            const SizedBox(height: 20),
+            _historyList(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _inputBar() {
+    return Column(
+      children: [
+        _inputField(
+          controller: pickupController,
+          hint: 'Pickup location',
+          icon: Icons.radio_button_checked,
+          onChanged: (txt) {},
+          onSelected: (txt) => _selectLocation(txt, isPickup: true),
+          readOnly: false,
+        ),
+        const SizedBox(height: 8),
+        _inputField(
+          controller: dropController,
+          hint: 'Drop location',
+          icon: Icons.location_on_outlined,
+          onChanged: (txt) => _fetchSuggestions(txt),
+          onSelected: (txt) => _selectLocation(txt, isPickup: false),
+          readOnly: false,
+          mic: true,
+        ),
+        if (suggestions.isNotEmpty)
+          Container(
+            height: 180,
+            child: ListView.builder(
+              itemCount: suggestions.length,
+              itemBuilder: (context, idx) {
+                final s = suggestions[idx];
+                return ListTile(
+                  leading: const Icon(Icons.location_pin),
+                  title: Text(s.displayName),
+                  onTap: () => _selectLocation(s.displayName, isPickup: false),
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _inputField({
+    required TextEditingController controller,
+    required String hint,
+    required IconData icon,
+    required Function(String) onChanged,
+    required Function(String) onSelected,
+    bool readOnly = false,
+    bool mic = false,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 2))
+        ],
+      ),
+      child: TextField(
+        controller: controller,
+        readOnly: readOnly,
+        decoration: InputDecoration(
+          prefixIcon: Icon(icon, color: Colors.black),
+          suffixIcon: mic
+              ? IconButton(
+                  icon: Icon(isListening ? Icons.mic : Icons.mic_none),
+                  onPressed: _toggleMic,
+                )
+              : null,
+          hintText: hint,
+          border: InputBorder.none,
+        ),
+        onChanged: onChanged,
+        onTap: () {
+          if (!readOnly && suggestions.isNotEmpty) {
+            showModalBottomSheet(
+              context: context,
+              builder: (_) => ListView.builder(
+                itemCount: suggestions.length,
+                itemBuilder: (context, idx) {
+                  final s = suggestions[idx];
+                  return ListTile(
+                    leading: const Icon(Icons.location_pin),
+                    title: Text(s.displayName),
+                    onTap: () {
+                      controller.text = s.displayName;
+                      onSelected(s.displayName);
+                      Navigator.pop(context);
+                    },
+                  );
+                },
+              ),
+            );
+          }
+        },
+      ),
+    );
+  }
+
+  Widget _historyList() {
+    if (history.isEmpty) {
+      return Column(
+        children: const [
+          Icon(Icons.history, size: 40, color: Colors.grey),
+          SizedBox(height: 8),
+          Text("No recent rides", style: TextStyle(color: Colors.grey)),
+          Text("Your ride history will appear here",
+              style: TextStyle(color: Colors.grey, fontSize: 12)),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text("Recent Rides",
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        ...history.map((place) => ListTile(
+              leading: const Icon(Icons.history),
+              title: Text(place),
+              onTap: () {
+                dropController.text = place;
+                _selectLocation(place, isPickup: false);
+              },
+            )),
+      ],
+    );
+  }
+
+  Widget _buildMapScreen() {
+    return Stack(
+      children: [
+        gmaps.GoogleMap(
+          onMapCreated: (c) => mapController = c,
+          initialCameraPosition: gmaps.CameraPosition(
+            target: pickupPoint ?? gmaps.LatLng(17.3850, 78.4867),
+            zoom: 15,
+          ),
+          markers: {
+            if (pickupPoint != null)
+              gmaps.Marker(
+                markerId: const gmaps.MarkerId('pickup'),
+                position: pickupPoint!,
+                icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+                    gmaps.BitmapDescriptor.hueGreen),
+              ),
+            if (dropPoint != null)
+              gmaps.Marker(
+                markerId: const gmaps.MarkerId('drop'),
+                position: dropPoint!,
+                icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+                    gmaps.BitmapDescriptor.hueRed),
+              ),
+          },
+          polylines: routePoints.isNotEmpty
+              ? {
+                  gmaps.Polyline(
+                    polylineId: const gmaps.PolylineId('route'),
+                    points: routePoints,
+                    width: 4,
+                    color: Colors.blue,
+                  )
+                }
+              : {},
+          myLocationEnabled: true,
+          myLocationButtonEnabled: true,
+        ),
+        Positioned(
+          top: 40,
+          left: 20,
+          right: 20,
+          child: Column(
+            children: [
+              _inputField(
+                controller: pickupController,
+                hint: 'Pickup location',
+                icon: Icons.radio_button_checked,
+                onChanged: (txt) {},
+                onSelected: (txt) {},
+                readOnly: true,
+              ),
+              const SizedBox(height: 8),
+              _inputField(
+                controller: dropController,
+                hint: 'Drop location',
+                icon: Icons.location_on_outlined,
+                onChanged: (txt) {},
+                onSelected: (txt) {},
+                readOnly: true,
+              ),
+            ],
+          ),
+        ),
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: _fareCards(),
+        ),
+      ],
+    );
+  }
+
+  Widget _fareCards() {
+    if (loadingFares) {
+      return const Padding(
+        padding: EdgeInsets.all(20),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (fares.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(20), topRight: Radius.circular(20)),
+        boxShadow: [
+          BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, -2))
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: fares.keys.map((v) {
+                return GestureDetector(
+                  onTap: () => setState(() => selectedVehicle = v),
+                  child: _fareCard(
+                    label: v,
+                    assetPath: vehicleAssets[v]!,
+                    fare: fares[v],
+                    selected: selectedVehicle == v,
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 20),
+          if (durationSec != null)
+            Text('Duration: ${_prettyDuration(durationSec!)}',
+                style: TextStyle(fontSize: 14, color: Colors.grey[800])),
+          const SizedBox(height: 10),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue[900],
+              minimumSize: const Size(double.infinity, 48),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24)),
+            ),
+            onPressed: _confirmRide,
+            child: const Text('Confirm Ride',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _fareCard({
+    required String label,
+    required String assetPath,
+    required double? fare,
+    bool selected = false,
+  }) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8),
+      width: 120,
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: selected ? Colors.blue[50] : Colors.grey[200],
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: selected
+            ? [BoxShadow(color: Colors.blue.withOpacity(0.2), blurRadius: 8)]
+            : [],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Image.asset(assetPath, fit: BoxFit.contain, height: 60),
+          const SizedBox(height: 8),
+          Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+          Text(fare != null ? '₹${fare.toStringAsFixed(0)}' : 'Loading...'),
+        ],
+      ),
+    );
+  }
+
+  String _prettyDuration(double secs) {
+    final d = Duration(seconds: secs.round());
+    return d.inHours > 0
+        ? '${d.inHours}h ${d.inMinutes.remainder(60)}m'
+        : '${d.inMinutes}m';
+  }
+}
+
+// --- Google Place Helper ---
+class LocationResult {
+  LocationResult(
+      {required this.latitude,
+      required this.longitude,
+      required this.displayName});
+  final double latitude;
+  final double longitude;
+  final String displayName;
+}
+
+class GooglePlaceHelper {
+  static final _place = GooglePlace(googleApiKey);
+  static Future<LocationResult?> search(String input) async {
+    final predictions = await _place.autocomplete.get(input);
+    if (predictions == null ||
+        predictions.predictions == null ||
+        predictions.predictions!.isEmpty) return null;
+    final first = predictions.predictions!.first;
+    final details = await _place.details.get(first.placeId!);
+    if (details == null || details.result == null) return null;
+    final loc = details.result!.geometry?.location;
+    return LocationResult(
+      latitude: loc?.lat ?? 0.0,
+      longitude: loc?.lng ?? 0.0,
+      displayName: details.result!.formattedAddress ?? first.description ?? '',
+    );
+  }
+
+  static Future<List<LocationResult>> autocomplete(String input,
+      {gmaps.LatLng? center}) async {
+    final predictions = await _place.autocomplete.get(
+      input,
+      location:
+          center != null ? LatLon(center.latitude, center.longitude) : null,
+      radius: 20000,
+    );
+    if (predictions?.predictions == null) return [];
+    return predictions!.predictions!.map((p) {
+      return LocationResult(
+          latitude: 0, longitude: 0, displayName: p.description ?? '');
+    }).toList();
+  }
+}
 
 // ✅ Centralized constants
-const String googleApiKey = 'AIzaSyCqfjktNhxjKfM-JmpSwBk9KtgY429QWY8';
 const List<String> invalidHistoryTerms = ['auto', 'bike', 'car'];
 const Map<String, String> vehicleAssets = {
   'bike': 'assets/images/bike.png',
@@ -57,7 +763,7 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
   static const _historyKey = 'location_history';
   List<String> _history = [];
 
-  final String apiBase = 'http://192.168.43.3:5002'; // Your backend IP
+  final String apiBase = 'http://192.168.15.12:5002'; // Your backend IP
   final List<String> vehicles = ['bike', 'auto', 'car', 'premium', 'xl'];
   final Map<String, double> _vehicleFares = {};
   bool _loadingFares = false;
@@ -75,7 +781,7 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
 
     final socketService = SocketService();
     socketService
-        .connect('http://192.168.43.3:5002'); // your backend socket URL
+        .connect('http://192.168.15.12:5002'); // your backend socket URL
     socketService.connectCustomer(); // auto uses Firebase phone/UID
 
     _speech = stt.SpeechToText();
@@ -914,45 +1620,6 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
     );
   }
 
-  Widget _buildLocalHistory() {
-    if (_history.isEmpty) return const SizedBox.shrink();
-
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 5,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: ListView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: _history.length,
-        itemBuilder: (context, index) {
-          final place = _history[index];
-          return ListTile(
-            dense: true,
-            leading: const Icon(Icons.history, size: 20),
-            title: Text(place, style: const TextStyle(fontSize: 14)),
-            trailing: IconButton(
-              icon: const Icon(Icons.favorite_border, size: 20),
-              onPressed: () {},
-            ),
-            onTap: () {
-              dropController.text = place;
-              _searchLocation(place, isPickup: false);
-            },
-          );
-        },
-      ),
-    );
-  }
-
   Widget _fareCard(String label, String assetPath, double? fare,
       {String? labelBelow}) {
     return Column(
@@ -979,8 +1646,8 @@ class _OpenStreetLocationPageState extends State<OpenStreetLocationPage> {
   }
 }
 
-class LocationResult {
-  LocationResult({
+class LocationResultV2 {
+  LocationResultV2({
     required this.latitude,
     required this.longitude,
     required this.displayName,
@@ -990,10 +1657,10 @@ class LocationResult {
   final String displayName;
 }
 
-class GooglePlaceHelper {
+class GooglePlaceHelperV2 {
   static final _place = GooglePlace('AIzaSyCqfjktNhxjKfM-JmpSwBk9KtgY429QWY8');
 
-  static Future<LocationResult?> search(String input) async {
+  static Future<LocationResultV2?> search(String input) async {
     final predictions = await _place.autocomplete.get(input);
     if (predictions == null || predictions.predictions == null) return null;
 
@@ -1002,14 +1669,14 @@ class GooglePlaceHelper {
     if (details == null || details.result == null) return null;
 
     final loc = details.result!.geometry?.location;
-    return LocationResult(
+    return LocationResultV2(
       latitude: loc?.lat ?? 0.0,
       longitude: loc?.lng ?? 0.0,
       displayName: details.result!.formattedAddress ?? first.description ?? '',
     );
   }
 
-  static Future<List<LocationResult>> autocomplete(String input,
+  static Future<List<LocationResultV2>> autocomplete(String input,
       {gmaps.LatLng? center}) async {
     final predictions = await _place.autocomplete.get(
       input,
@@ -1022,7 +1689,7 @@ class GooglePlaceHelper {
 
     // ✅ Only use predictions first (faster, no details call yet)
     return predictions!.predictions!.map((p) {
-      return LocationResult(
+      return LocationResultV2(
         latitude: 0, // Will fetch later on selection
         longitude: 0,
         displayName: p.description ?? '',

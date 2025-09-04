@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 //import 'package:geolocator/geolocator.dart';
 
 /* ─── config ─── */
-const _BASE = 'http://192.168.43.3:5002';
+const _BASE = 'http://192.168.15.12:5002';
 
 class ParcelLiveTrackingPage extends StatefulWidget {
   final String customerId;
@@ -40,33 +40,34 @@ class _ParcelLiveTrackingPageState extends State<ParcelLiveTrackingPage> {
         Uri.parse('$_BASE/api/parcels/tracking/${widget.customerId}'),
         headers: {'Content-Type': 'application/json'},
       );
-      
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['success'] && data['location'] != null) {
           setState(() {
             driverLocation = LatLng(
-              data['location']['latitude'], 
-              data['location']['longitude']
-            );
+                data['location']['latitude'], data['location']['longitude']);
           });
         } else {
           // Fallback to default location if no data available
           setState(() {
-            driverLocation = const LatLng(17.385044, 78.486671); // Hyderabad example
+            driverLocation =
+                const LatLng(17.385044, 78.486671); // Hyderabad example
           });
         }
       } else {
         // Fallback to default location on error
         setState(() {
-          driverLocation = const LatLng(17.385044, 78.486671); // Hyderabad example
+          driverLocation =
+              const LatLng(17.385044, 78.486671); // Hyderabad example
         });
       }
     } catch (e) {
       print('Error fetching driver location: $e');
       // Fallback to default location on error
       setState(() {
-        driverLocation = const LatLng(17.385044, 78.486671); // Hyderabad example
+        driverLocation =
+            const LatLng(17.385044, 78.486671); // Hyderabad example
       });
     }
   }
