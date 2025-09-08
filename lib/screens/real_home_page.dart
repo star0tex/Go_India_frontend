@@ -12,10 +12,12 @@ import 'dart:convert';
 import 'help_page.dart';
 import 'parcel_live_tracking_page.dart';
 import 'ride_history_page.dart';
-//import 'safety_page.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
+import 'models/trip_args.dart'; // Import the new TripArgs class
 
 class RealHomePage extends StatefulWidget {
-  final String customerId; // <-- Add this
+  final String customerId;
 
   const RealHomePage({super.key, required this.customerId});
 
@@ -53,6 +55,11 @@ class _RealHomePageState extends State<RealHomePage>
   String rating = '';
   List<String> locationHistory = [];
 
+  // Current location data
+  double? _currentLat;
+  double? _currentLng;
+  String _currentAddress = '';
+
   @override
   void initState() {
     super.initState();
@@ -87,6 +94,7 @@ class _RealHomePageState extends State<RealHomePage>
             '';
     _fetchUserProfile();
     _loadLocationHistory();
+    _getCurrentLocation();
   }
 
   void _checkOldUser() async {
@@ -105,6 +113,51 @@ class _RealHomePageState extends State<RealHomePage>
     }
   }
 
+  Future<void> _getCurrentLocation() async {
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        return;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        return;
+      }
+
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      setState(() {
+        _currentLat = position.latitude;
+        _currentLng = position.longitude;
+      });
+
+      // Get address from coordinates
+      List<Placemark> placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      );
+
+      if (placemarks.isNotEmpty) {
+        Placemark placemark = placemarks.first;
+        setState(() {
+          _currentAddress =
+              '${placemark.street}, ${placemark.locality}, ${placemark.administrativeArea}';
+        });
+      }
+    } catch (e) {
+      debugPrint('Error getting current location: $e');
+    }
+  }
+
   Future<void> _fetchUserProfile() async {
     try {
       final res = await http
@@ -115,7 +168,7 @@ class _RealHomePageState extends State<RealHomePage>
           name = user['name'] ?? '';
           phone = user['phone'] ?? phone;
         });
-        _loadLocationHistory(); // 👈 reload with updated phone
+        _loadLocationHistory();
       }
     } catch (e) {
       debugPrint("Failed to fetch profile: $e");
@@ -176,31 +229,50 @@ class _RealHomePageState extends State<RealHomePage>
   }
 
   void _openLocationPage(String destination) {
-    if (destination.isEmpty) return;
-
-    const allowedTypes = ['bike', 'auto', 'car', 'premium', 'xl'];
-    final vehicle = selectedVehicle?.toLowerCase().trim();
-
-    // Fallback to "bike" if no vehicle selected or vehicle not allowed
-    final effectiveVehicle = allowedTypes.contains(vehicle) ? vehicle : 'bike';
-    selectedVehicle = effectiveVehicle; // update it globally
-
-    // Save to history only for allowed vehicles
-    if (allowedTypes.contains(effectiveVehicle)) {
-      _addToHistory(destination);
-    }
+    if (destination.isEmpty || _currentLat == null || _currentLng == null)
+      return;
 
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => OpenStreetLocationPage(
-          initialDrop: destination,
-          selectedVehicle: effectiveVehicle,
+        builder: (_) => ShortTripPage(
+          args: TripArgs(
+            pickupLat: _currentLat!,
+            pickupLng: _currentLng!,
+            pickupAddress: _currentAddress,
+            dropAddress: destination,
+            vehicleType: null,
+            showAllFares: true,
+          ),
         ),
       ),
     ).then((_) => _fetchUserProfile());
 
     _searchController.clear();
+  }
+
+  void _navigateToShortTrip(String vehicleType) {
+    if (_currentLat == null || _currentLng == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Please wait while we get your location')),
+      );
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ShortTripPage(
+          args: TripArgs(
+            pickupLat: _currentLat!,
+            pickupLng: _currentLng!,
+            pickupAddress: _currentAddress,
+            vehicleType: vehicleType,
+            showAllFares: false,
+          ),
+        ),
+      ),
+    ).then((_) => _fetchUserProfile());
   }
 
   void _showAllServices() {
@@ -261,17 +333,7 @@ class _RealHomePageState extends State<RealHomePage>
                                 customerId: widget.customerId),
                           ).then((_) => _fetchUserProfile());
                         } else {
-                          selectedVehicle = data['label']!.toLowerCase();
-                          if (_searchController.text.isNotEmpty) {
-                            _addToHistory(_searchController.text);
-                          }
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => OpenStreetLocationPage(
-                                  selectedVehicle: selectedVehicle),
-                            ),
-                          ).then((_) => _fetchUserProfile());
+                          _navigateToShortTrip(data['label']!.toLowerCase());
                         }
                       },
                       child: Column(
@@ -422,7 +484,7 @@ class _RealHomePageState extends State<RealHomePage>
                               fontSize: 16, fontWeight: FontWeight.w600)),
                       const SizedBox(height: 8),
                       SizedBox(
-                        height: 120, // Enough for ~2 items, scrollable if more
+                        height: 120,
                         child: Scrollbar(
                           thumbVisibility: true,
                           child: ListView.separated(
@@ -556,28 +618,8 @@ class _RealHomePageState extends State<RealHomePage>
                   builder: (_) => ParcelLocationPage(
                         customerId: widget.customerId,
                       ))).then((_) => _fetchUserProfile());
-        } else if (label == 'Car Trip') {
-          showModalBottomSheet(
-            context: ctx,
-            isScrollControlled: true,
-            backgroundColor: Colors.white,
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            builder: (_) =>
-                CarTripAgreementSheet(customerId: widget.customerId),
-          ).then((_) => _fetchUserProfile());
         } else {
-          selectedVehicle = label.toLowerCase();
-          if (_searchController.text.isNotEmpty) {
-            _addToHistory(_searchController.text);
-          }
-          Navigator.push(
-            ctx,
-            MaterialPageRoute(
-                builder: (_) =>
-                    OpenStreetLocationPage(selectedVehicle: selectedVehicle)),
-          ).then((_) => _fetchUserProfile());
+          _navigateToShortTrip(label.toLowerCase());
         }
       },
       child: Stack(
@@ -687,7 +729,7 @@ class _RealHomePageState extends State<RealHomePage>
             Icons.help_outline,
             "Help",
             onTap: () {
-              Navigator.pop(ctx); // Close drawer
+              Navigator.pop(ctx);
               Navigator.push(
                 ctx,
                 MaterialPageRoute(builder: (_) => const HelpPage()),
@@ -720,17 +762,6 @@ class _RealHomePageState extends State<RealHomePage>
               );
             },
           ),
-          //  _drawerTile(
-          //    Icons.shield_outlined,
-          //    "Safety",
-          //   onTap: () {
-          //     Navigator.pop(ctx);
-          //    Navigator.push(
-          //      ctx,
-          //     MaterialPageRoute(builder: (_) => const SafetyPage()),
-          //    );
-          //     },
-          //  ),
 
           _drawerTile(Icons.favorite_border, "Favourites"),
           _drawerTile(Icons.payment, "Payment"),
