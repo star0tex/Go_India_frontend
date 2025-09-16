@@ -20,7 +20,7 @@ class IndianRideApp extends StatelessWidget {
         primarySwatch: Colors.amber,
         useMaterial3: true,
       ),
-      home: const SplashScreen(), // ✅ Load Splash first
+      home: const SplashScreen()// ✅ Load Splash first
     );
   }
 }

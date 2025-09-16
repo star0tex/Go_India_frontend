@@ -68,7 +68,7 @@ class _LoginPageState extends State<LoginPage> {
 
     try {
       final res = await http.post(
-        Uri.parse("http://192.168.15.12:5002/api/auth/firebase-login"),
+        Uri.parse("http://192.168.1.12:5002/api/auth/firebase-login"),
         headers: {
           "Content-Type": "application/json",
           "Authorization": "Bearer $token",

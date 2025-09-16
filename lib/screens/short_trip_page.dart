@@ -11,10 +11,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/socket_service.dart';
 import 'models/trip_args.dart';
-
+import 'package:socket_io_client/socket_io_client.dart' as IO;
 // TODO: Replace with project env var
 const String googleMapsApiKey = 'AIzaSyCqfjktNhxjKfM-JmpSwBk9KtgY429QWY8';
-const String apiBase = 'http://192.168.15.12:5002';
+const String apiBase = 'http://192.168.1.12:5002';
 
 const Map<String, String> vehicleAssets = {
   'bike': 'assets/images/bike.png',
@@ -29,18 +29,20 @@ const List<String> invalidHistoryTerms = ['auto', 'bike', 'car'];
 
 class ShortTripPage extends StatefulWidget {
   final String? vehicleType;
+  final String customerId;
   final TripArgs args;
   final Map<String, dynamic>? initialPickup;
   final Map<String, dynamic>? initialDrop;
   final String? entryMode;
 
+  // ignore: use_super_parameters
   const ShortTripPage({
     Key? key,
     required this.args,
     this.vehicleType,
     this.initialPickup,
     this.initialDrop,
-    this.entryMode,
+    this.entryMode, required this.customerId,
   }) : super(key: key);
 
   @override
@@ -50,7 +52,7 @@ class ShortTripPage extends StatefulWidget {
 class _ShortTripPageState extends State<ShortTripPage> {
   // Screen management
   int _screenIndex = 0; // 0: Search screen, 1: Map+Fare screen
-
+late IO.Socket socket;
   // Location data
   final TextEditingController _pickupController = TextEditingController();
   final TextEditingController _dropController = TextEditingController();
@@ -60,6 +62,7 @@ class _ShortTripPageState extends State<ShortTripPage> {
   String _dropAddress = '';
   String _pickupState = '';
   String _pickupCity = '';
+  String? _fare;
 
   // Map & route
   gmaps.GoogleMapController? _mapController;
@@ -86,15 +89,88 @@ class _ShortTripPageState extends State<ShortTripPage> {
     super.initState();
     _selectedVehicle = widget.vehicleType;
     _initializeData();
+    _initSocket();
   }
+void _initSocket() {
+socket = IO.io("http://192.168.43.3:5002", {
+"transports": ["websocket"],
+"autoConnect": false,
+});
 
+
+socket.connect();
+
+
+socket.onConnect((_) {
+debugPrint("✅ Socket connected");
+});
+
+
+socket.onDisconnect((_) {
+debugPrint("❌ Socket disconnected");
+});
+
+
+socket.on("tripConfirmed", (data) {
+debugPrint("📩 Trip confirmed: $data");
+});
+}
+
+
+void _safeEmit(String event, dynamic data) {
+if (socket.connected) {
+socket.emit(event, data);
+} else {
+debugPrint("⚠️ Socket not connected, waiting...");
+socket.once("connect", (_) {
+socket.emit(event, data);
+});
+}
+}
+Future<void> _getFareEstimate() async {
+try {
+final response = await http.post(
+Uri.parse("http://192.168.43.3:5002/api/fare/estimate"),
+headers: {"Content-Type": "application/json"},
+body: jsonEncode({
+"pickup": _pickupController.text,
+"dropoff": _dropController.text,
+}),
+);
+
+
+if (response.statusCode == 200) {
+final data = jsonDecode(response.body);
+setState(() {
+_fare = data['fare'].toString();
+});
+} else {
+debugPrint("❌ Fare API failed: ${response.statusCode}");
+}
+} catch (e) {
+debugPrint("⚠️ Fare fetch error: $e");
+}
+}
+
+
+void _requestTrip() {
+_safeEmit("customerRequestTripByType", {
+"customerId": widget.customerId,
+"pickup": _pickupController.text,
+"dropoff": _dropController.text,
+});
+debugPrint("🚕 Trip request emitted safely");
+}
   @override
   void dispose() {
+    socket.dispose();
     _pickupController.dispose();
     _dropController.dispose();
     _speech.stop();
     _debounce?.cancel();
     _mapController?.dispose();
+    _pickupController.dispose();
+_dropController.dispose();
     super.dispose();
   }
 
@@ -582,19 +658,25 @@ class _ShortTripPageState extends State<ShortTripPage> {
   }
 
   Future<void> _fetchFares() async {
-    if (_distanceKm == null || _durationSec == null) return;
+  if (_distanceKm == null || _durationSec == null) return;
 
-    setState(() => _loadingFares = true);
+  setState(() {
+    _loadingFares = true;
     _fares.clear();
+  });
 
-    try {
-      // Fetch fares for all vehicle types in parallel
-      final futures = vehicleLabels.map((vehicleType) async {
-        if (widget.vehicleType != null && widget.vehicleType != vehicleType) {
-          return;
-        }
+  // ✅ Choose vehicles to fetch
+  final vehiclesToFetch = (widget.vehicleType != null &&
+          widget.vehicleType!.isNotEmpty)
+      ? [widget.vehicleType!]
+      : vehicleLabels.where((v) => v.isNotEmpty).toList();
 
+  try {
+    final results = await Future.wait(
+      vehiclesToFetch.map((vehicleType) async {
         try {
+          debugPrint('📡 Fetching fare for vehicleType="$vehicleType"...');
+
           final response = await http.post(
             Uri.parse('$apiBase/api/fares/calc'),
             headers: {'Content-Type': 'application/json'},
@@ -611,82 +693,132 @@ class _ShortTripPageState extends State<ShortTripPage> {
           if (response.statusCode == 200) {
             final data = jsonDecode(response.body);
             final total = (data['total'] as num).toDouble();
-            setState(() => _fares[vehicleType] = total);
+            debugPrint('✅ Fare for $vehicleType = $total');
+            return MapEntry(vehicleType, total);
           } else if (response.statusCode == 404) {
+            debugPrint('⚠️ Rate not found for $vehicleType');
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('Rate not found for $vehicleType')),
             );
+            return null;
+          } else {
+            debugPrint(
+                '❌ Failed response ${response.statusCode} for $vehicleType');
           }
         } catch (e) {
-          // Individual vehicle fare failure shouldn't block others
+          debugPrint('❌ Error fetching fare for $vehicleType: $e');
         }
-      });
+        return null;
+      }),
+    );
 
-      await Future.wait(futures);
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to fetch fares: $e')),
-      );
-    } finally {
-      setState(() => _loadingFares = false);
-    }
+    // ✅ Apply results once
+    setState(() {
+      for (var entry in results) {
+        if (entry != null) {
+          _fares[entry.key] = entry.value;
+        }
+      }
+    });
+  } catch (e) {
+    debugPrint('🔥 Unexpected error in _fetchFares: $e');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Failed to fetch fares: $e')),
+    );
+  } finally {
+    setState(() => _loadingFares = false);
+  }
+}
+
+
+Future<void> _confirmRide() async {
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please login to book a ride')),
+    );
+    return;
   }
 
-  Future<void> _confirmRide() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please login to book a ride')),
+  // ✅ Ensure selected vehicle is never empty
+  if (_selectedVehicle == null || _selectedVehicle!.trim().isEmpty) {
+    _selectedVehicle = (widget.vehicleType != null &&
+            widget.vehicleType!.trim().isNotEmpty)
+        ? widget.vehicleType
+        : 'car'; // fallback
+    debugPrint('⚠️ _selectedVehicle was empty. Defaulting to $_selectedVehicle');
+  }
+
+  if (!_fares.containsKey(_selectedVehicle)) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Please select a valid vehicle type')),
+    );
+    return;
+  }
+
+  if (_pickupPoint == null || _dropPoint == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Please select pickup and drop locations')),
+    );
+    return;
+  }
+
+  final rideData = {
+    "customerId": user.phoneNumber?.replaceAll('+91', '') ?? user.uid,
+    "pickup": {
+      "coordinates": [_pickupPoint!.latitude, _pickupPoint!.longitude],
+      "address": _pickupAddress,
+    },
+    "drop": {
+      "coordinates": [_dropPoint!.latitude, _dropPoint!.longitude],
+      "address": _dropAddress,
+    },
+    "vehicleType": _selectedVehicle!.toLowerCase().trim(),
+    "fare": _fares[_selectedVehicle],
+    "timestamp": DateTime.now().toIso8601String(),
+  };
+
+  debugPrint("🚨 Sending rideData: ${jsonEncode(rideData)}");
+
+  try {
+    // ✅ HTTP call to backend trip API
+    final response = await http.post(
+      Uri.parse("$apiBase/api/trip/short"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode(rideData),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      debugPrint("✅ Trip created on server: $data");
+
+      // Keep your socket emit (legacy)
+      SocketService().emitCustomerRequestTripByType(
+        TripType.short,
+        rideData,
       );
-      return;
-    }
 
-    if (_selectedVehicle == null || !_fares.containsKey(_selectedVehicle)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please select a vehicle')),
-      );
-      return;
-    }
-
-    if (_pickupPoint == null || _dropPoint == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please select pickup and drop locations')),
-      );
-      return;
-    }
-
-    final rideData = {
-      "pickup": {
-        "lat": _pickupPoint!.latitude,
-        "lng": _pickupPoint!.longitude,
-        "address": _pickupAddress,
-      },
-      "drop": {
-        "lat": _dropPoint!.latitude,
-        "lng": _dropPoint!.longitude,
-        "address": _dropAddress,
-      },
-      "vehicleType": _selectedVehicle,
-      "fare": _fares[_selectedVehicle],
-      "userId": user.phoneNumber ?? user.uid,
-      "timestamp": DateTime.now().toIso8601String(),
-    };
-
-    try {
-      SocketService().emitCustomerRequestTripByType(TripType.short, rideData);
       await _saveToHistory(_dropAddress);
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ride request sent! Waiting for driver...')),
+        const SnackBar(content: Text('Ride request sent! Waiting for driver...')),
       );
 
-      // TODO: Navigate to waiting screen or show dialog
-    } catch (e) {
+      // TODO: navigate to waiting screen or show dialog with tripId
+    } else {
+      debugPrint("❌ Trip API failed: ${response.statusCode} ${response.body}");
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send ride request: $e')),
+        SnackBar(content: Text('Ride request failed: ${response.body}')),
       );
     }
+  } catch (e) {
+    debugPrint("⚠️ Error calling trip API: $e");
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Failed to send ride request: $e')),
+    );
   }
+}
+
 
   @override
   Widget build(BuildContext context) {
@@ -1002,7 +1134,9 @@ class _FarePanel extends StatelessWidget {
       return SizedBox.shrink();
     }
 
-    final vehiclesToShow = showAll ? vehicleLabels : [selectedVehicle!];
+final vehiclesToShow = showAll
+    ? vehicleLabels
+    : (selectedVehicle != null ? [selectedVehicle!] : [vehicleLabels.first]);
 
     return Container(
       padding: EdgeInsets.all(16),
