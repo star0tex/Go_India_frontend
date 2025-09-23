@@ -11,10 +11,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/socket_service.dart';
 import 'models/trip_args.dart';
-import 'package:socket_io_client/socket_io_client.dart' as IO;
+import 'driver_en_route_page.dart'; // ✅ NEW: Import the new page
 // TODO: Replace with project env var
 const String googleMapsApiKey = 'AIzaSyCqfjktNhxjKfM-JmpSwBk9KtgY429QWY8';
-const String apiBase = 'http://192.168.1.12:5002';
+const String apiBase = 'http://192.168.1.28:5002';
 
 const Map<String, String> vehicleAssets = {
   'bike': 'assets/images/bike.png',
@@ -51,8 +51,14 @@ class ShortTripPage extends StatefulWidget {
 
 class _ShortTripPageState extends State<ShortTripPage> {
   // Screen management
+  gmaps.LatLng? _driverPosition;
+Set<gmaps.Marker> _markers = {};
+Timer? _locationTimer;
+ // ✅ NEW: State variables for waiting logic
+  bool _isWaitingForDriver = false;
+  String? _currentTripId;
+  Timer? _rerequestTimer;
   int _screenIndex = 0; // 0: Search screen, 1: Map+Fare screen
-late IO.Socket socket;
   // Location data
   final TextEditingController _pickupController = TextEditingController();
   final TextEditingController _dropController = TextEditingController();
@@ -88,49 +94,140 @@ late IO.Socket socket;
   void initState() {
     super.initState();
     _selectedVehicle = widget.vehicleType;
+     WidgetsBinding.instance.addPostFrameCallback((_) {
     _initializeData();
-    _initSocket();
+    _setupSocketListeners(); // Remove the Future.delayed
+  });
+}
+  
+  // ✅ NEW: This function will set up our listeners.
+  // We separate it from connection logic, assuming connection is handled once per app session.
+  // short_trip_page.dart
+
+void _setupSocketListeners() {
+  final socketService = SocketService();
+  
+  print('🎧 Setting up socket listeners for customer: ${widget.customerId}');
+  
+  // Connect to socket
+    socketService.connectCustomer(customerId: widget.customerId);
+
+  // Wait for connection, then register
+  socketService.on('connect', (data) {
+    print('🟢 Socket connected: ${socketService.rawSocket?.id}');
+    Future.delayed(const Duration(milliseconds: 500), () {
+      print('👤 Registering customer: ${widget.customerId}');
+      socketService.connectCustomer(customerId: widget.customerId);
+    });
+  });
+  
+  // Listen for registration confirmation
+  socketService.on('customer:registered', (data) {
+    print('✅ Customer registered successfully: $data');
+  });
+  
+  // Primary trip accepted listener
+  socketService.on('trip:accepted', (data) {
+    print('🎯 TRIP ACCEPTED EVENT: $data');
+    _handleTripAccepted(data);
+  });
+}
+
+void _handleTripAccepted(Map<String, dynamic> data) {
+  print('🎯 Handling trip acceptance: $data');
+  
+  if (!mounted) return;
+
+  final receivedTripId = data['tripId']?.toString();
+  if (_currentTripId == null || receivedTripId != _currentTripId) {
+    print('⚠️ Trip ID mismatch - current: $_currentTripId, received: $receivedTripId');
+    return;
   }
-void _initSocket() {
-socket = IO.io("http://192.168.43.3:5002", {
-"transports": ["websocket"],
-"autoConnect": false,
-});
 
+  _rerequestTimer?.cancel();
+  setState(() => _isWaitingForDriver = false);
 
-socket.connect();
+  final driverDetails = data['driver'] as Map<String, dynamic>?;
+  final tripDetails = data['trip'] as Map<String, dynamic>?;
 
+  print('👤 Driver details: $driverDetails');
+  print('🚗 Trip details: $tripDetails');
 
-socket.onConnect((_) {
-debugPrint("✅ Socket connected");
-});
+  // Validate driver details
+  if (driverDetails == null || driverDetails['id'] == null) {
+    print('❌ Invalid or missing driver details');
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        backgroundColor: Colors.red,
+        content: Text('Driver details missing'),
+      ),
+    );
+    return;
+  }
 
+  if (tripDetails != null) {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DriverEnRoutePage(
+          driverDetails: driverDetails,
+          tripDetails: tripDetails,
+        ),
+      ),
+    );
+  }
+}void _updateMarkers() {
+  _markers.clear();
 
-socket.onDisconnect((_) {
-debugPrint("❌ Socket disconnected");
-});
+  // Pickup marker
+  if (_pickupPoint != null) {
+    _markers.add(gmaps.Marker(
+      markerId: const gmaps.MarkerId("pickup"),
+      position: _pickupPoint!,
+      icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+        gmaps.BitmapDescriptor.hueGreen,
+      ),
+    ));
+  }
 
+  // Drop marker
+  if (_dropPoint != null) {
+    _markers.add(gmaps.Marker(
+      markerId: const gmaps.MarkerId("drop"),
+      position: _dropPoint!,
+      icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+        gmaps.BitmapDescriptor.hueRed,
+      ),
+    ));
+  }
 
-socket.on("tripConfirmed", (data) {
-debugPrint("📩 Trip confirmed: $data");
-});
+  // Driver marker
+  if (_driverPosition != null) {
+    _markers.add(gmaps.Marker(
+      markerId: const gmaps.MarkerId("driver"),
+      position: _driverPosition!,
+      icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+        gmaps.BitmapDescriptor.hueBlue,
+      ),
+    ));
+  }
+
+  // Trigger refresh on map
+  setState(() {});
 }
 
 
 void _safeEmit(String event, dynamic data) {
-if (socket.connected) {
-socket.emit(event, data);
-} else {
-debugPrint("⚠️ Socket not connected, waiting...");
-socket.once("connect", (_) {
-socket.emit(event, data);
-});
-}
+  if (SocketService().isConnected) {
+    SocketService().emit(event, data);
+  } else {
+    debugPrint("⚠️ Socket not connected. Event '$event' not sent immediately.");
+  }
 }
 Future<void> _getFareEstimate() async {
 try {
 final response = await http.post(
-Uri.parse("http://192.168.43.3:5002/api/fare/estimate"),
+Uri.parse("http://192.168.1.28:5002/api/fare/estimate"),
 headers: {"Content-Type": "application/json"},
 body: jsonEncode({
 "pickup": _pickupController.text,
@@ -161,19 +258,32 @@ _safeEmit("customerRequestTripByType", {
 });
 debugPrint("🚕 Trip request emitted safely");
 }
-  @override
+ @override
   void dispose() {
-    socket.dispose();
+    _rerequestTimer?.cancel();
+
+    final socketService = SocketService();
+    socketService.off('trip:accepted');
+    socketService.off('driver:locationUpdate');
+    socketService.off('customer:registered');
+    socketService.off('connect_error');
+    socketService.off('disconnect');
+
+    try {
+      socketService.rawSocket?.offAny();
+    } catch (e) {
+      print('⚠️ Error removing onAny listener: $e');
+    }
+
     _pickupController.dispose();
     _dropController.dispose();
     _speech.stop();
     _debounce?.cancel();
     _mapController?.dispose();
-    _pickupController.dispose();
-_dropController.dispose();
+    _locationTimer?.cancel();
+
     super.dispose();
   }
-
   Future<void> _initializeData() async {
     await _loadHistory();
 
@@ -733,55 +843,31 @@ _dropController.dispose();
 
 Future<void> _confirmRide() async {
   final user = FirebaseAuth.instance.currentUser;
-  if (user == null) {
+  if (user == null || _selectedVehicle == null || _pickupPoint == null || _dropPoint == null) {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Please login to book a ride')),
-    );
-    return;
-  }
-
-  // ✅ Ensure selected vehicle is never empty
-  if (_selectedVehicle == null || _selectedVehicle!.trim().isEmpty) {
-    _selectedVehicle = (widget.vehicleType != null &&
-            widget.vehicleType!.trim().isNotEmpty)
-        ? widget.vehicleType
-        : 'car'; // fallback
-    debugPrint('⚠️ _selectedVehicle was empty. Defaulting to $_selectedVehicle');
-  }
-
-  if (!_fares.containsKey(_selectedVehicle)) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Please select a valid vehicle type')),
-    );
-    return;
-  }
-
-  if (_pickupPoint == null || _dropPoint == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Please select pickup and drop locations')),
+      const SnackBar(content: Text('Please ensure all details are correct.')),
     );
     return;
   }
 
   final rideData = {
+    "type": "short", // ✅ ADD THIS - Important for backend routing
     "customerId": user.phoneNumber?.replaceAll('+91', '') ?? user.uid,
     "pickup": {
-      "coordinates": [_pickupPoint!.latitude, _pickupPoint!.longitude],
+      "coordinates": [_pickupPoint!.longitude, _pickupPoint!.latitude],
       "address": _pickupAddress,
     },
     "drop": {
-      "coordinates": [_dropPoint!.latitude, _dropPoint!.longitude],
+      "coordinates": [_dropPoint!.longitude, _dropPoint!.latitude],
       "address": _dropAddress,
     },
     "vehicleType": _selectedVehicle!.toLowerCase().trim(),
     "fare": _fares[_selectedVehicle],
-    "timestamp": DateTime.now().toIso8601String(),
   };
 
-  debugPrint("🚨 Sending rideData: ${jsonEncode(rideData)}");
+  print("🚨 Sending rideData to /api/trip/short: ${jsonEncode(rideData)}");
 
-  try {
-    // ✅ HTTP call to backend trip API
+   try {
     final response = await http.post(
       Uri.parse("$apiBase/api/trip/short"),
       headers: {"Content-Type": "application/json"},
@@ -790,45 +876,97 @@ Future<void> _confirmRide() async {
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      debugPrint("✅ Trip created on server: $data");
+      print("✅ Trip created on server: $data");
 
-      // Keep your socket emit (legacy)
-      SocketService().emitCustomerRequestTripByType(
-        TripType.short,
-        rideData,
-      );
+      if (data['tripId'] != null) {
+        setState(() {
+          _currentTripId = data['tripId'];
+          _isWaitingForDriver = data['drivers'] > 0;
+        });
 
-      await _saveToHistory(_dropAddress);
+        print("🎯 CURRENT TRIP ID SET TO: $_currentTripId");
+        print("🎯 WAITING FOR DRIVER: $_isWaitingForDriver");
+        print("🎯 CUSTOMER ID: ${widget.customerId}");
+       if (_isWaitingForDriver) {
+          _rerequestTimer?.cancel();
+          _rerequestTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+            if (!mounted) {
+              timer.cancel();
+              return;
+            }
+            print("🔁 Re-requesting trip: $_currentTripId");
+            SocketService().emit('trip:rerequest', {'tripId': _currentTripId});
+          });
+        }
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ride request sent! Waiting for driver...')),
+        SnackBar(
+          content: Text(_isWaitingForDriver ? 
+            'Searching for nearby drivers...' : 
+            'No drivers available right now.'),
+        ),
       );
-
-      // TODO: navigate to waiting screen or show dialog with tripId
     } else {
-      debugPrint("❌ Trip API failed: ${response.statusCode} ${response.body}");
+      print("❌ Trip API failed: ${response.statusCode} ${response.body}");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Ride request failed: ${response.body}')),
       );
     }
   } catch (e) {
-    debugPrint("⚠️ Error calling trip API: $e");
+    print("⚠️ Error calling trip API: $e");
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Failed to send ride request: $e')),
     );
   }
 }
+@override
+Widget build(BuildContext context) {
+  return Scaffold(
+    body: Stack(
+      children: [
+        // This is your main content (the search screen or the map screen)
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 350),
+          child: _screenIndex == 0 ? _buildSearchScreen() : _buildMapScreen(),
+        ),
 
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: AnimatedSwitcher(
-        duration: Duration(milliseconds: 350),
-        child: _screenIndex == 0 ? _buildSearchScreen() : _buildMapScreen(),
-      ),
-    );
-  }
+        // This is the overlay that shows ONLY when you are waiting for a driver
+        if (_isWaitingForDriver)
+          Container(
+            color: Colors.black.withOpacity(0.7),
+            child: Center(
+              child: Card(
+                elevation: 8,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 30),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(),
+                      const SizedBox(height: 20),
+                      Text(
+                        'Waiting for a driver to accept...',
+                        style: GoogleFonts.poppins(fontSize: 16),
+                      ),
+                      const SizedBox(height: 10),
+                      // Ensure _currentTripId is not null before displaying
+                      if (_currentTripId != null)
+                        Text(
+                          'Trip ID: $_currentTripId',
+                          style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
+}
 
   Widget _buildSearchScreen() {
     return SafeArea(
@@ -889,41 +1027,28 @@ Future<void> _confirmRide() async {
     return Stack(
       children: [
         gmaps.GoogleMap(
-          onMapCreated: (controller) => _mapController = controller,
-          initialCameraPosition: gmaps.CameraPosition(
-            target: _pickupPoint ?? const gmaps.LatLng(0, 0),
-            zoom: 15,
+  onMapCreated: (controller) {
+    _mapController = controller;
+    _updateMarkers(); // initialize markers
+  },
+  initialCameraPosition: gmaps.CameraPosition(
+    target: _pickupPoint ?? const gmaps.LatLng(0, 0),
+    zoom: 15,
+  ),
+  markers: _markers, // ✅ use dynamic markers
+  polylines: _routePoints.isNotEmpty
+      ? {
+          gmaps.Polyline(
+            polylineId: const gmaps.PolylineId('route'),
+            points: _routePoints,
+            color: Colors.blue,
+            width: 4,
           ),
-          markers: {
-            if (_pickupPoint != null)
-              gmaps.Marker(
-                markerId: gmaps.MarkerId('pickup'),
-                position: _pickupPoint!,
-                icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
-                  gmaps.BitmapDescriptor.hueGreen,
-                ),
-              ),
-            if (_dropPoint != null)
-              gmaps.Marker(
-                markerId: gmaps.MarkerId('drop'),
-                position: _dropPoint!,
-                icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
-                  gmaps.BitmapDescriptor.hueRed,
-                ),
-              ),
-          },
-          polylines: _routePoints.isNotEmpty
-              ? {
-                  gmaps.Polyline(
-                    polylineId: gmaps.PolylineId('route'),
-                    points: _routePoints,
-                    color: Colors.blue,
-                    width: 4,
-                  ),
-                }
-              : {},
-          myLocationEnabled: true,
-        ),
+        }
+      : {},
+  myLocationEnabled: true,
+),
+
         Positioned(
           top: 16,
           left: 16,
@@ -979,6 +1104,7 @@ class _LocationInputBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -1181,24 +1307,28 @@ final vehiclesToShow = showAll
               ),
             ),
           SizedBox(height: 16),
-          ElevatedButton(
-            onPressed: onConfirmRide,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue[900],
-              minimumSize: Size(double.infinity, 50),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(25),
-              ),
-            ),
-            child: Text(
-              'Confirm Ride',
-              style: GoogleFonts.poppins(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
-            ),
-          ),
+          //... inside _FarePanel widget
+ElevatedButton(
+  // The button is disabled (onPressed is null) if no vehicle is selected.
+  // Otherwise, it's enabled with the onConfirmRide function.
+  onPressed: selectedVehicle != null ? onConfirmRide : null,
+  style: ElevatedButton.styleFrom(
+    // You can also change the color based on the state for a clearer visual cue
+    backgroundColor: selectedVehicle != null ? Colors.blue[900] : Colors.grey,
+    minimumSize: Size(double.infinity, 50),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(25),
+    ),
+  ),
+  child: Text(
+    'Confirm Ride',
+    style: GoogleFonts.poppins(
+      fontSize: 16,
+      fontWeight: FontWeight.bold,
+      color: Colors.white,
+    ),
+  ),
+),
         ],
       ),
     );

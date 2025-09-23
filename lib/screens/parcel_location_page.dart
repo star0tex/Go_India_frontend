@@ -1,4 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
+
+import 'package:firebase_auth/firebase_auth.dart';
+import '../services/socket_service.dart';
 
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -7,12 +11,7 @@ import 'package:google_maps_webservice/places.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:http/http.dart' as http;
-import 'package:image_picker/image_picker.dart'; // 🆕 for photo
-import 'dart:io';
-
-
-
-
+import 'package:image_picker/image_picker.dart';
 // ─────────────────────────────
 // Screen 1 → Pickup
 // ─────────────────────────────
@@ -35,48 +34,48 @@ class _PickupScreenState extends State<PickupScreen> {
     _getCurrentLocation();
   }
 
- Future<void> _getCurrentLocation() async {
-  try {
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
+  Future<void> _getCurrentLocation() async {
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.deniedForever ||
+          permission == LocationPermission.denied) {
+        setState(() {
+          _pickupAddress = "Location permission denied";
+        });
+        return;
+      }
+
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.best,
+      );
+
+      final placemarks = await placemarkFromCoordinates(pos.latitude, pos.longitude);
+
+      if (placemarks.isNotEmpty) {
+        final place = placemarks.first;
+
+        // Build full address safely
+        final address = [
+          place.name,                       // house/building number
+          place.street,                     // street / road
+          place.subLocality,                // area / colony
+          place.locality,                   // city
+          place.subAdministrativeArea,      // district
+          place.administrativeArea,         // state
+          place.postalCode,                 // pincode
+        ].where((e) => e != null && e.isNotEmpty).join(", ");
+
+        setState(() => _pickupAddress = address);
+      } else {
+        setState(() => _pickupAddress = "Unable to fetch address");
+      }
+    } catch (e) {
+      setState(() => _pickupAddress = "Error fetching location: $e");
     }
-    if (permission == LocationPermission.deniedForever ||
-        permission == LocationPermission.denied) {
-      setState(() {
-        _pickupAddress = "Location permission denied";
-      });
-      return;
-    }
-
-    final pos = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.best,
-    );
-
-    final placemarks = await placemarkFromCoordinates(pos.latitude, pos.longitude);
-
-    if (placemarks.isNotEmpty) {
-      final place = placemarks.first;
-
-      // Build full address safely
-      final address = [
-        place.name,                       // house/building number
-        place.street,                     // street / road
-        place.subLocality,                // area / colony
-        place.locality,                   // city
-        place.subAdministrativeArea,      // district
-        place.administrativeArea,         // state
-        place.postalCode,                 // pincode
-      ].where((e) => e != null && e.isNotEmpty).join(", ");
-
-      setState(() => _pickupAddress = address);
-    } else {
-      setState(() => _pickupAddress = "Unable to fetch address");
-    }
-  } catch (e) {
-    setState(() => _pickupAddress = "Error fetching location: $e");
   }
-}
 
   void _swapLocations() {
     setState(() {
@@ -140,7 +139,6 @@ class _PickupScreenState extends State<PickupScreen> {
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [
                   BoxShadow(
-                    // ignore: deprecated_member_use
                     color: Colors.grey.withOpacity(0.15),
                     spreadRadius: 1,
                     blurRadius: 6,
@@ -252,7 +250,7 @@ class _PickupScreenState extends State<PickupScreen> {
                       final result = await Navigator.push(
                         context,
                         MaterialPageRoute(
-                            builder: (context) => const DropScreen(customerId: '',)),
+                            builder: (context) => DropScreen(customerId: widget.customerId)),
                       );
 
                       if (result != null && result is String) {
@@ -325,11 +323,10 @@ class _PickupScreenState extends State<PickupScreen> {
     );
   }
 }
+
 // ─────────────────────────────
 // Screen 2 → Drop
-
-
-
+// ─────────────────────────────
 
 class DropScreen extends StatefulWidget {
   final String customerId;
@@ -354,7 +351,6 @@ class _DropScreenState extends State<DropScreen> {
     _loadSearchHistory();
   }
 
-  /// ✅ Load history
   Future<void> _loadSearchHistory() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -362,13 +358,11 @@ class _DropScreenState extends State<DropScreen> {
     });
   }
 
-  /// ✅ Save history
   Future<void> _saveSearchHistory() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList("recentSearches", _recentSearches);
   }
 
-  /// ✅ Fetch autocomplete suggestions
   Future<void> _getSuggestions(String input) async {
     if (input.trim().isEmpty) {
       setState(() => _suggestions.clear());
@@ -394,40 +388,37 @@ class _DropScreenState extends State<DropScreen> {
     }
   }
 
-  /// ✅ Handle location selection
-void _selectLocation(String? location) async {
-  if (location == null || location.isEmpty) return;
+  void _selectLocation(String? location) async {
+    if (location == null || location.isEmpty) return;
 
-  // ✅ Show loading dialog immediately
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (_) => const Center(
-      child: CircularProgressIndicator(),
-    ),
-  );
-
-  // Save in history (max 10)
-  if (!_recentSearches.contains(location)) {
-    _recentSearches.insert(0, location);
-    if (_recentSearches.length > 10) {
-      _recentSearches.removeLast();
-    }
-    await _saveSearchHistory();
-  }
-
-  // ✅ Navigate safely
-  Navigator.pop(context); // close loader before navigation
-  Navigator.pushReplacement(
-    context,
-    MaterialPageRoute(
-      builder: (_) => ParcelLocationPage(
-        customerId: widget.customerId,
-        pickupText: location,
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: CircularProgressIndicator(),
       ),
-    ),
-  );
-}
+    );
+
+    // Save in history (max 10)
+    if (!_recentSearches.contains(location)) {
+      _recentSearches.insert(0, location);
+      if (_recentSearches.length > 10) {
+        _recentSearches.removeLast();
+      }
+      await _saveSearchHistory();
+    }
+
+    Navigator.pop(context); // close loader before navigation
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ParcelLocationPage(
+          customerId: widget.customerId,
+          pickupText: location,
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -521,8 +512,9 @@ void _selectLocation(String? location) async {
     );
   }
 }
+
 // ─────────────────────────────
-// Screen 3 → Your Existing Page
+// Screen 3 → Parcel Location Page
 // ─────────────────────────────
 
 class ParcelLocationPage extends StatefulWidget {
@@ -545,24 +537,79 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
   final Set<Polyline> _polylines = {};
   LatLng? _currentPosition;
   LatLng? _dropPosition;
-  bool _showDetailsCard = true; // first card
-  bool _showFareCard = false;   // second card
+  bool _showDetailsCard = true;
+  bool _showFareCard = false;
   Map<String, dynamic>? _fareData;
-  final String _apiKey =
-      "AIzaSyCqfjktNhxjKfM-JmpSwBk9KtgY429QWY8"; // 🔑 replace with your key
-   final TextEditingController _weightController = TextEditingController();
-   final TextEditingController _nameController = TextEditingController();
-final TextEditingController _phoneController = TextEditingController();
 
-  
+  final String _apiKey = "AIzaSyCqfjktNhxjKfM-JmpSwBk9KtgY429QWY8";
+
+  final TextEditingController _weightController = TextEditingController();
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
+
   File? _parcelPhoto;
-  bool get allInputsFilled {
-  return _nameController.text.isNotEmpty &&
-      _phoneController.text.isNotEmpty &&
-      _weightController.text.isNotEmpty &&
-      _parcelPhoto != null;
-}
   bool _isSubmitting = false;
+
+  // socket state
+  String? _currentTripId;
+  bool _isWaitingForDriver = false;
+
+  bool get allInputsFilled {
+    return _nameController.text.isNotEmpty &&
+        _phoneController.text.isNotEmpty &&
+        _weightController.text.isNotEmpty &&
+        _parcelPhoto != null;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchCurrentLocation();
+    _setupSocketListeners();
+  }
+
+  @override
+  void dispose() {
+    SocketService().disconnect();
+    super.dispose();
+  }
+  void _setupSocketListeners() {
+    final socketService = SocketService();
+    
+    // Connect to socket
+    socketService.connect("http://192.168.1.28:5002");
+    socketService.connectCustomer(customerId: widget.customerId);
+
+    // Listen for trip acceptance
+    socketService.onTripAccepted((data) {
+      print("Driver accepted parcel: $data");
+      setState(() {
+        _isWaitingForDriver = false;
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Driver accepted your parcel delivery!"),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    });
+
+    // Listen for rejections/reassignments
+    socketService.onTripRejectedBySystem((data) {
+      print("Trip rejected: $data");
+      if (data['tripId'] == _currentTripId && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Looking for another driver..."),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    });
+  }
 
   Future<void> _pickParcelPhoto() async {
     final picker = ImagePicker();
@@ -574,39 +621,50 @@ final TextEditingController _phoneController = TextEditingController();
     }
   }
 
-Future<void> _fetchFare() async {
+  Future<void> _fetchFare() async {
   if (_currentPosition == null || _dropPosition == null) {
-    print("❌ Pickup or drop not set yet");
+    print("⚠️ Pickup or drop not set yet");
     return;
   }
 
   try {
-    // 1️⃣ Calculate distance dynamically
-    final distanceKm = Geolocator.distanceBetween(
-          _currentPosition!.latitude,
-          _currentPosition!.longitude,
-          _dropPosition!.latitude,
-          _dropPosition!.longitude,
-        ) /
-        1000;
+    double finalDistance = 0.1; // default fallback min distance
 
-    print("📍 Distance: $distanceKm km");
-      final weight = double.tryParse(_weightController.text) ?? 1; // 🆕 use input
+    try {
+      final distanceMeters = Geolocator.distanceBetween(
+        _currentPosition!.latitude,
+        _currentPosition!.longitude,
+        _dropPosition!.latitude,
+        _dropPosition!.longitude,
+      );
 
-    // 2️⃣ Prepare request body
+      double distanceKm = (distanceMeters / 1000).abs();
+
+      if (distanceKm.isNaN || distanceKm.isInfinite) {
+        print("⚠️ Distance calculation invalid, fallback to 0.1 km");
+        distanceKm = 0.1;
+      }
+
+      finalDistance = distanceKm < 0.1 ? 0.1 : distanceKm;
+    } catch (e) {
+      print("⚠️ Error calculating distance: $e. Using fallback 0.1 km");
+      finalDistance = 0.1;
+    }
+
+    print("📏 Distance: $finalDistance km");
+
+    final weight = double.tryParse(_weightController.text) ?? 1;
+
     final body = {
-      "state": "Telangana",       // can also come from location API
-      "city": "Hyderabad",        // can also come from location API
-      "distanceKm": distanceKm,  
+      "state": "Telangana",
+      "city": "Hyderabad",
+      "distanceKm": finalDistance,
       "vehicleType": "bike",
       "weight": weight,
       "category": "parcel",
-
- // ✅ dynamic
     };
 
-    // 3️⃣ Call backend (make sure this matches your backend route!)
-    final url = Uri.parse("http://192.168.43.3:5002/api/parcels/estimate");
+    final url = Uri.parse("http://192.168.1.28:5002/api/parcels/estimate");
 
     final res = await http.post(
       url,
@@ -614,7 +672,6 @@ Future<void> _fetchFare() async {
       body: jsonEncode(body),
     );
 
-    // 4️⃣ Handle response
     if (res.statusCode == 200) {
       final data = jsonDecode(res.body);
       print("✅ Fare Response: $data");
@@ -628,70 +685,107 @@ Future<void> _fetchFare() async {
       print("❌ Fare API Error: ${res.statusCode} - ${res.body}");
     }
   } catch (e) {
-    print("🚨 Fare fetch failed: $e");
+    print("🔥 Fare fetch failed: $e");
   }
 }
-Future<void> _bookParcel() async {
-  if (!allInputsFilled || _currentPosition == null || _dropPosition == null) {
-    print("❌ Missing inputs");
-    return;
-  }
-
-  setState(() => _isSubmitting = true);
-
-  try {
-    final url = Uri.parse("http://192.168.43.3:5002/api/parcels/create");
-    final request = http.MultipartRequest("POST", url);
-
-    // required fields for backend
-    request.fields['state'] = "Telangana";
-    request.fields['city'] = "Hyderabad";
-    request.fields['vehicleType'] = "bike";
-    request.fields['category'] = "parcel";
-    request.fields['distanceKm'] = Geolocator.distanceBetween(
-      _currentPosition!.latitude,
-      _currentPosition!.longitude,
-      _dropPosition!.latitude,
-      _dropPosition!.longitude,
-    ).toString();
-    request.fields['weight'] = _weightController.text;
-
-    request.fields['pickupLat'] = _currentPosition!.latitude.toString();
-    request.fields['pickupLng'] = _currentPosition!.longitude.toString();
-    request.fields['dropLat'] = _dropPosition!.latitude.toString();
-    request.fields['dropLng'] = _dropPosition!.longitude.toString();
-
-    // ✅ new mandatory inputs
-    request.fields['receiverName'] = _nameController.text;
-    request.fields['receiverPhone'] = _phoneController.text;
-    request.fields['notes'] = "Handle with care";   // or from another input
-    request.fields['payment'] = "cod";             // or online
-
-    // ✅ backend expects "photo"
-    request.files.add(await http.MultipartFile.fromPath(
-      "photo",
-      _parcelPhoto!.path,
-    ));
-
-    final response = await request.send();
-    final responseData = await http.Response.fromStream(response);
-
-    if (response.statusCode == 201) {
-      print("✅ Parcel booked: ${responseData.body}");
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Parcel booked successfully")),
-      );
-    } else {
-      print("❌ Booking failed: ${responseData.body}");
+  Future<void> _bookParcel() async {
+    if (!allInputsFilled || _currentPosition == null || _dropPosition == null) {
+      print("Missing inputs");
+      return;
     }
-  } catch (e) {
-    print("🚨 Error booking parcel: $e");
-  } finally {
-    setState(() => _isSubmitting = false);
+
+    setState(() => _isSubmitting = true);
+
+    try {
+      // Use trip controller for socket broadcasting
+      final url = Uri.parse("http://192.168.1.28:5002/api/trip/parcel");
+      
+      // Calculate distance
+      final distanceMeters = Geolocator.distanceBetween(
+        _currentPosition!.latitude,
+        _currentPosition!.longitude,
+        _dropPosition!.latitude,
+        _dropPosition!.longitude,
+      );
+      final distanceKm = (distanceMeters / 1000).abs();
+      final finalDistance = distanceKm < 0.1 ? 0.1 : distanceKm;
+final user = FirebaseAuth.instance.currentUser;
+
+final tripData = {
+  "customerId": user?.phoneNumber?.replaceAll('+91', '') ?? user?.uid,
+  "vehicleType": "bike",
+  "pickup": {
+    "coordinates": [_currentPosition!.longitude, _currentPosition!.latitude],
+    "address": "Current Location"
+  },
+  "drop": {
+    "coordinates": [_dropPosition!.longitude, _dropPosition!.latitude], 
+    "address": widget.pickupText ?? "Drop Location"
+  },
+  "parcelDetails": {
+    "weight": _weightController.text,
+    "receiverName": _nameController.text,
+    "receiverPhone": _phoneController.text,
+    "notes": "Handle with care",
+  },
+  "fare": _fareData?['cost'] ?? 0,
+  "paymentMethod": "cod"
+};
+      final response = await http.post(
+        url,
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode(tripData),
+      );
+
+      print("Response: ${response.statusCode} - ${response.body}");
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final responseData = jsonDecode(response.body);
+        print("Trip created: $responseData");
+        
+        // Store trip ID for socket listening
+        _currentTripId = responseData['tripId'];
+        
+        setState(() {
+          _isWaitingForDriver = responseData['drivers'] > 0;
+        });
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(responseData['drivers'] > 0 
+                ? "Searching for nearby drivers..."
+                : "No drivers available right now"),
+            ),
+          );
+        }
+      } else {
+        print("Booking failed: ${response.statusCode} - ${response.body}");
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Failed to book parcel. Please try again."),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      print("Error booking parcel: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Network error. Please check your connection."),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
   }
-}
-
-
 
   @override
   Widget build(BuildContext context) {
@@ -713,124 +807,134 @@ Future<void> _bookParcel() async {
                 ),
                 Align(
                   alignment: Alignment.bottomCenter,
-                  child: _showDetailsCard
-                      ? _buildDropDetailsCard()
-                      : _showFareCard
-                          ? _buildFareCard()
-                          : const SizedBox.shrink(),
+                  child: _isWaitingForDriver 
+                      ? _buildWaitingCard()
+                      : _showDetailsCard
+                          ? _buildDropDetailsCard()
+                          : _showFareCard
+                              ? _buildFareCard()
+                              : const SizedBox.shrink(),
                 ),
               ],
             ),
     );
   }
 
-  // -----------------------------
-  // Drop details card
-  // -----------------------------
+  Widget _buildWaitingCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 30),
+      decoration: _cardDecoration(),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(),
+          const SizedBox(height: 16),
+          const Text(
+            "Looking for nearby drivers...",
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Trip ID: $_currentTripId",
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildDropDetailsCard() {
-  return Container(
-    width: double.infinity,
-    padding: const EdgeInsets.fromLTRB(20, 20, 20, 30),
-    decoration: _cardDecoration(),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // 🆕 Name input (mandatory)
-        TextField(
-          controller: _nameController,
-          decoration: _inputStyle("Name*", Icons.person).copyWith(
-            errorText: _nameController.text.isEmpty ? "Name is required" : null,
-          ),
-          onChanged: (_) => setState(() {}),
-        ),
-        const SizedBox(height: 12),
-
-        // 🆕 Phone input (mandatory)
-        TextField(
-          controller: _phoneController,
-          keyboardType: TextInputType.phone,
-          decoration: _inputStyle("Phone Number*", Icons.phone).copyWith(
-            errorText: _phoneController.text.isEmpty ? "Phone is required" : null,
-          ),
-          onChanged: (_) => setState(() {}),
-        ),
-        const SizedBox(height: 12),
-
-        // 🆕 Photo upload (mandatory)
-        Row(
-          children: [
-            ElevatedButton.icon(
-              onPressed: _pickParcelPhoto,
-              icon: const Icon(Icons.photo_camera),
-              label: const Text("Add Parcel Photo"),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 30),
+      decoration: _cardDecoration(),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _nameController,
+            decoration: _inputStyle("Name*", Icons.person).copyWith(
+              errorText: _nameController.text.isEmpty ? null : null,
             ),
-            const SizedBox(width: 10),
-            if (_parcelPhoto != null)
-              const Icon(Icons.check_circle, color: Colors.green),
-            if (_parcelPhoto == null)
-              const Text("Required", style: TextStyle(color: Colors.red, fontSize: 12)),
-          ],
-        ),
-        const SizedBox(height: 16),
-
-        // 🆕 Weight input (mandatory)
-        TextField(
-          controller: _weightController,
-          keyboardType: TextInputType.number,
-          decoration: _inputStyle("Parcel Weight (kg)", Icons.scale).copyWith(
-            errorText: _weightController.text.isEmpty ? "Weight is required" : null,
+            onChanged: (_) => setState(() {}),
           ),
-          onChanged: (_) => setState(() {}),
-        ),
-        const SizedBox(height: 20),
+          const SizedBox(height: 12),
 
-        // Chips (address type)
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            _buildChip("Home", Icons.home),
-            _buildChip("Work", Icons.work),
-            _buildChip("Gym", Icons.fitness_center),
-            _buildChip("College", Icons.school),
-            _buildChip("Hostel", Icons.hotel),
-            _buildAddNewChip(),
-          ],
-        ),
-        const SizedBox(height: 20),
+          TextField(
+            controller: _phoneController,
+            keyboardType: TextInputType.phone,
+            decoration: _inputStyle("Phone Number*", Icons.phone).copyWith(
+              errorText: _phoneController.text.isEmpty ? null : null,
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 12),
 
-        // ✅ Button only enabled if all inputs filled
-        SizedBox(
-          width: double.infinity,
-          height: 48,
-          child: ElevatedButton(
-            onPressed: allInputsFilled ? _fetchFare : null,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: allInputsFilled ? Colors.black : Colors.grey,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+          Row(
+            children: [
+              ElevatedButton.icon(
+                onPressed: _pickParcelPhoto,
+                icon: const Icon(Icons.photo_camera),
+                label: const Text("Add Parcel Photo"),
+              ),
+              const SizedBox(width: 10),
+              if (_parcelPhoto != null)
+                const Icon(Icons.check_circle, color: Colors.green),
+              if (_parcelPhoto == null)
+                const Text("Required", style: TextStyle(color: Colors.red, fontSize: 12)),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          TextField(
+            controller: _weightController,
+            keyboardType: TextInputType.number,
+            decoration: _inputStyle("Parcel Weight (kg)", Icons.scale).copyWith(
+              errorText: _weightController.text.isEmpty ? null : null,
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 20),
+
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _buildChip("Home", Icons.home),
+              _buildChip("Work", Icons.work),
+              _buildChip("Gym", Icons.fitness_center),
+              _buildChip("College", Icons.school),
+              _buildChip("Hostel", Icons.hotel),
+              _buildAddNewChip(),
+            ],
+          ),
+          const SizedBox(height: 20),
+
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              onPressed: allInputsFilled ? _fetchFare : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: allInputsFilled ? Colors.black : Colors.grey,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text(
+                "Confirm drop details",
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white),
               ),
             ),
-            child: const Text(
-              "Confirm drop details",
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-            ),
           ),
-        ),
-      ],
-    ),
-  );
-}
+        ],
+      ),
+    );
+  }
 
-  // -----------------------------
-  // Fare card
-  // -----------------------------
   Widget _buildFareCard() {
     if (_fareData == null) return const SizedBox.shrink();
-
-    final breakdown = _fareData!['breakdown'] ?? {};
-  final allInputsFilled =
-        _parcelPhoto != null && _weightController.text.isNotEmpty;
 
     return Container(
       width: double.infinity,
@@ -842,60 +946,35 @@ Future<void> _bookParcel() async {
           const Text("Parcel Fare",
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 16),
-Text("₹${_fareData!['total']}",
-    style: const TextStyle(
-        fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black)),
+          Text("₹${_fareData!['cost'] ?? _fareData!['total'] ?? '0'}",
+              style: const TextStyle(
+                  fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black)),
+          const SizedBox(height: 20),
 
-        const SizedBox(height: 12),
-
-if (breakdown.isNotEmpty) ...[
-  _fareBreakdownRow("Base Fare", breakdown['baseFare']),
-  _fareBreakdownRow("Delivery", breakdown['deliveryCharge']),
-  _fareBreakdownRow("Weight", breakdown['weightCharges']),
-  _fareBreakdownRow("Platform Fee", breakdown['platformFee']),
-],
-
-SizedBox(
-  width: double.infinity,
-  height: 48,
-  child: ElevatedButton(
-    onPressed: allInputsFilled ? _bookParcel : null,
-    style: ElevatedButton.styleFrom(
-      backgroundColor: allInputsFilled ? Colors.black : Colors.grey,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-    ),
-    child: _isSubmitting
-        ? const CircularProgressIndicator(color: Colors.white)
-        : const Text(
-            "Confirm & Book",
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              onPressed: allInputsFilled ? _bookParcel : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: allInputsFilled ? Colors.black : Colors.grey,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: _isSubmitting
+                  ? const CircularProgressIndicator(color: Colors.white)
+                  : const Text(
+                      "Confirm & Book",
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white),
+                    ),
+            ),
           ),
-  ),
-),
-        ],
-      ),
-    );}
-
-  Widget _fareBreakdownRow(String label, dynamic value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: const TextStyle(fontSize: 14)),
-          Text("₹$value",
-              style:
-                  const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
         ],
       ),
     );
   }
 
-  // -----------------------------
-  // Helpers
-  // -----------------------------
   BoxDecoration _cardDecoration() => BoxDecoration(
         color: Colors.white,
         borderRadius: const BorderRadius.only(
@@ -922,7 +1001,6 @@ SizedBox(
         fillColor: Colors.grey[100],
       );
 
-
   Widget _buildChip(String label, IconData icon) => Chip(
         label: Text(label),
         avatar: Icon(icon, size: 18, color: Colors.black87),
@@ -944,67 +1022,76 @@ SizedBox(
   // -----------------------------
   // Map + Location
   // -----------------------------
-  @override
-  void initState() {
-    super.initState();
-    _fetchCurrentLocation();
-  }
 
   Future<void> _fetchCurrentLocation() async {
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return;
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return;
 
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) return;
-    }
-    if (permission == LocationPermission.deniedForever) return;
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) return;
+      }
+      if (permission == LocationPermission.deniedForever) return;
 
-    Position position = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high,
-    );
-
-    setState(() {
-      _currentPosition = LatLng(position.latitude, position.longitude);
-      _markers.add(
-        Marker(
-          markerId: const MarkerId("pickup"),
-          position: _currentPosition!,
-          infoWindow: const InfoWindow(title: "Pickup"),
-          icon: BitmapDescriptor.defaultMarkerWithHue(
-              BitmapDescriptor.hueGreen),
-        ),
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
       );
-    });
 
-    if (widget.pickupText != null && widget.pickupText!.isNotEmpty) {
-      await _getDropCoordinates(widget.pickupText!);
+      if (!mounted) return;
+
+      final currentPos = LatLng(position.latitude, position.longitude);
+
+      setState(() {
+        _currentPosition = currentPos;
+        _markers.add(
+          Marker(
+            markerId: const MarkerId("pickup"),
+            position: currentPos,
+            infoWindow: const InfoWindow(title: "Pickup"),
+            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
+          ),
+        );
+      });
+
+      // auto set drop if pickup text given
+      if (widget.pickupText != null && widget.pickupText!.isNotEmpty) {
+        await _getDropCoordinates(widget.pickupText!);
+      }
+    } catch (e) {
+      print("🔥 Error in _fetchCurrentLocation: $e");
     }
   }
 
   Future<void> _getDropCoordinates(String address) async {
-    final url = Uri.parse(
-      "https://maps.googleapis.com/maps/api/geocode/json?address=${Uri.encodeComponent(address)}&key=$_apiKey",
-    );
-    final response = await http.get(url);
-    final data = json.decode(response.body);
+    try {
+      final url = Uri.parse(
+        "https://maps.googleapis.com/maps/api/geocode/json?address=${Uri.encodeComponent(address)}&key=$_apiKey",
+      );
+      final response = await http.get(url);
+      final data = json.decode(response.body);
 
-    if (data["status"] == "OK") {
-      final loc = data["results"][0]["geometry"]["location"];
-      setState(() {
-        _dropPosition = LatLng(loc["lat"], loc["lng"]);
-        _markers.add(
-          Marker(
-            markerId: const MarkerId("drop"),
-            position: _dropPosition!,
-            infoWindow: InfoWindow(title: address),
-            icon:
-                BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-          ),
-        );
-      });
-      await _drawRoute();
+      if (data["status"] == "OK") {
+        final loc = data["results"][0]["geometry"]["location"];
+        final dropPos = LatLng(loc["lat"], loc["lng"]);
+
+        setState(() {
+          _dropPosition = dropPos;
+          _markers.add(
+            Marker(
+              markerId: const MarkerId("drop"),
+              position: dropPos,
+              infoWindow: InfoWindow(title: address),
+              icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+            ),
+          );
+        });
+
+        await _drawRoute();
+      }
+    } catch (e) {
+      print("🔥 Error in _getDropCoordinates: $e");
     }
   }
 
@@ -1012,53 +1099,79 @@ SizedBox(
     if (_currentPosition == null || _dropPosition == null) return;
 
     final url = Uri.parse(
-      "https://maps.googleapis.com/maps/api/directions/json?origin=${_currentPosition!.latitude},${_currentPosition!.longitude}&destination=${_dropPosition!.latitude},${_dropPosition!.longitude}&key=$_apiKey",
+      "https://maps.googleapis.com/maps/api/directions/json"
+      "?origin=${_currentPosition!.latitude},${_currentPosition!.longitude}"
+      "&destination=${_dropPosition!.latitude},${_dropPosition!.longitude}"
+      "&key=$_apiKey",
     );
 
-    final response = await http.get(url);
-    final data = json.decode(response.body);
+    try {
+      final response = await http.get(url);
+      final data = json.decode(response.body);
 
-    if (data["status"] == "OK") {
-      final points =
-          _decodePolyline(data["routes"][0]["overview_polyline"]["points"]);
+      if (data["status"] == "OK" && data["routes"].isNotEmpty) {
+        final points = _decodePolyline(data["routes"][0]["overview_polyline"]["points"]);
 
-      setState(() {
-        _polylines.clear();
-        _polylines.add(
-          Polyline(
-            polylineId: const PolylineId("route"),
-            color: Colors.black,
-            width: 5,
-            points: points,
-          ),
-        );
-      });
+        setState(() {
+          _polylines.clear();
+          _polylines.add(
+            Polyline(
+              polylineId: const PolylineId("route"),
+              color: Colors.black,
+              width: 5,
+              points: points,
+            ),
+          );
+        });
 
-      LatLngBounds bounds = LatLngBounds(
-        southwest: LatLng(
+        // bounds calc
+        LatLng sw = LatLng(
           (_currentPosition!.latitude <= _dropPosition!.latitude)
               ? _currentPosition!.latitude
               : _dropPosition!.latitude,
           (_currentPosition!.longitude <= _dropPosition!.longitude)
               ? _currentPosition!.longitude
               : _dropPosition!.longitude,
-        ),
-        northeast: LatLng(
+        );
+
+        LatLng ne = LatLng(
           (_currentPosition!.latitude > _dropPosition!.latitude)
               ? _currentPosition!.latitude
               : _dropPosition!.latitude,
           (_currentPosition!.longitude > _dropPosition!.longitude)
               ? _currentPosition!.longitude
               : _dropPosition!.longitude,
-        ),
-      );
-      _mapController?.animateCamera(
-        CameraUpdate.newLatLngBounds(bounds, 60),
-      );
+        );
+
+        final bounds = LatLngBounds(southwest: sw, northeast: ne);
+
+        if (_mapController != null) {
+          try {
+            if (sw.latitude == ne.latitude || sw.longitude == ne.longitude) {
+              // pickup == drop
+              await _mapController!.animateCamera(
+                CameraUpdate.newCameraPosition(
+                  CameraPosition(target: _currentPosition!, zoom: 16),
+                ),
+              );
+            } else {
+              await _mapController!.animateCamera(
+                CameraUpdate.newLatLngBounds(bounds, 60),
+              );
+            }
+          } catch (e) {
+            print("🔥 Camera update failed: $e");
+          }
+        }
+      } else {
+        print("⚠️ Directions API failed: ${data["status"]}");
+      }
+    } catch (e) {
+      print("🔥 Error in _drawRoute: $e");
     }
   }
 
-  List<LatLng> _decodePolyline(String encoded) {
+List<LatLng> _decodePolyline(String encoded) {
     List<LatLng> polyline = [];
     int index = 0, len = encoded.length;
     int lat = 0, lng = 0;

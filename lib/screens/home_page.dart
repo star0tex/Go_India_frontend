@@ -35,7 +35,7 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    const String apiUrl = 'http://192.168.1.12:5002/api/user';
+    const String apiUrl = 'http://192.168.1.28:5002/api/user';
 
     try {
       final payload = {

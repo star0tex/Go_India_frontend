@@ -17,6 +17,8 @@ class SocketService {
   SocketService._internal();
 
   IO.Socket? _socket;
+    bool _isConnected = false;
+
   String? _baseUrl;
 
   // Keep references to handlers so we can rebind after reconnect
@@ -29,66 +31,68 @@ class SocketService {
   bool get isConnected => _socket?.connected ?? false;
   IO.Socket? get rawSocket => _socket;
 
+
+
   /// Connect to Socket.IO server.
   /// Call once per app session (or page open) with the base URL, e.g. http://192.168.1.16:5002
-  void connect(String baseUrl) {
+void connect(String baseUrl) {
     if (_socket != null && _baseUrl == baseUrl && _socket!.connected) {
-      return;
-    }
-
-    _baseUrl = baseUrl;
-
-    // Clean up any previous socket instance
-    try {
-      _socket?.disconnect();
-      // Some versions have close()/dispose(); wrap in try to avoid runtime errors
-      // ignore: empty_catches
-      try {
-        _socket?.close();
-      } catch (_) {}
-      // ignore: empty_catches
-      try {
-        _socket?.dispose();
-      } catch (_) {}
-    } catch (_) {}
-
-    _socket = IO.io(
-      baseUrl,
-      IO.OptionBuilder()
-          .setTransports(['websocket'])
-          .disableAutoConnect()
-          .enableReconnection()
-          .setReconnectionAttempts(double.infinity.toInt()) // keep trying
-          .setReconnectionDelay(1000)
-          .build(),
-    );
-
-    // ---- Lifecycle ----
-    _socket!.onConnect((_) {
-      print('🟢 Socket connected -> $_baseUrl (id: ${_socket!.id})');
-      _reRegisterCustomerIfPossible();
-    });
-
-    _socket!.onReconnect((_) {
-      print('♻️ Socket reconnected (id: ${_socket!.id})');
-      _reRegisterCustomerIfPossible();
-    });
-
-    _socket!.onReconnectAttempt((attempt) {
-      print('… reconnecting to $_baseUrl (attempt $attempt)');
-    });
-
-    _socket!.onDisconnect((_) {
-      print('🔴 Socket disconnected');
-    });
-
-    _socket!.onError((err) {
-      print('⚠️ Socket error: $err');
-    });
-
-    _socket!.connect();
+    print('✅ Socket already connected to $baseUrl');
+    return;
   }
 
+  _baseUrl = baseUrl;
+
+  try {
+    _socket?.disconnect();
+    try {
+      _socket?.close();
+    } catch (_) {}
+    try {
+      _socket?.dispose();
+    } catch (_) {}
+  } catch (_) {}
+
+  _socket = IO.io(
+    baseUrl,
+    IO.OptionBuilder()
+        .setTransports(['websocket'])
+        .disableAutoConnect()
+        .enableReconnection()
+        .setReconnectionAttempts(-1)   // ✅ unlimited, safe
+        .setReconnectionDelay(1000)    // 1 second initial delay
+        .build(),
+  );
+
+  _socket!.onConnect((_) {
+    print('🟢 Socket connected -> $_baseUrl (id: ${_socket!.id})');
+    _reRegisterCustomerIfPossible();
+  });
+
+  // Add this for debugging all incoming events:
+  _socket!.onAny((event, data) {
+    print('📡 Socket event: $event -> $data');
+  });
+
+  _socket!.onReconnect((_) {
+    print('♻️ Socket reconnected (id: ${_socket!.id})');
+    _reRegisterCustomerIfPossible();
+  });
+
+  _socket!.onReconnectAttempt((attempt) {
+    print('… reconnecting to $_baseUrl (attempt $attempt)');
+  });
+
+  _socket!.onDisconnect((_) {
+    print('🔴 Socket disconnected');
+  });
+
+  _socket!.onError((err) {
+    print('⚠️ Socket error: $err');
+  });
+
+  _socket!.connect();
+}
   /// Registers this connection as a Customer on the backend.
   /// If [customerId] is omitted, it tries Firebase phoneNumber, then uid.
   Future<void> connectCustomer({String? customerId}) async {
@@ -231,7 +235,9 @@ class SocketService {
     _socket?.off(event);
     _socket?.on(event, (data) => handler(_toMap(data)));
   }
-
+void onAny(void Function(String event, dynamic data) handler) {
+  _socket?.onAny(handler);
+}
   void off(String event) {
     _socket?.off(event);
   }
