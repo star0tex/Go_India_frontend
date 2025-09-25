@@ -8,7 +8,7 @@ void main() async {
   await Firebase.initializeApp();
 
   // ✅ Correct: Connect to the socket BEFORE running the app.
-  SocketService().connect("http://192.168.1.28:5002"); // Use your IP
+  SocketService().connect("http://192.168.1.9:5002"); // Use your IP
 
   // Now run the app, which can safely use the connected service.
   runApp(const IndianRideApp());

@@ -17,8 +17,6 @@ class SocketService {
   SocketService._internal();
 
   IO.Socket? _socket;
-    bool _isConnected = false;
-
   String? _baseUrl;
 
   // Keep references to handlers so we can rebind after reconnect
@@ -36,8 +34,7 @@ class SocketService {
   /// Connect to Socket.IO server.
   /// Call once per app session (or page open) with the base URL, e.g. http://192.168.1.16:5002
 void connect(String baseUrl) {
-    if (_socket != null && _baseUrl == baseUrl && _socket!.connected) {
-    print('✅ Socket already connected to $baseUrl');
+  if (_socket != null && _baseUrl == baseUrl && _socket!.connected) {
     return;
   }
 
@@ -67,11 +64,6 @@ void connect(String baseUrl) {
   _socket!.onConnect((_) {
     print('🟢 Socket connected -> $_baseUrl (id: ${_socket!.id})');
     _reRegisterCustomerIfPossible();
-  });
-
-  // Add this for debugging all incoming events:
-  _socket!.onAny((event, data) {
-    print('📡 Socket event: $event -> $data');
   });
 
   _socket!.onReconnect((_) {
@@ -235,9 +227,7 @@ void connect(String baseUrl) {
     _socket?.off(event);
     _socket?.on(event, (data) => handler(_toMap(data)));
   }
-void onAny(void Function(String event, dynamic data) handler) {
-  _socket?.onAny(handler);
-}
+
   void off(String event) {
     _socket?.off(event);
   }

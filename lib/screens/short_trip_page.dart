@@ -14,7 +14,7 @@ import 'models/trip_args.dart';
 import 'driver_en_route_page.dart'; // ✅ NEW: Import the new page
 // TODO: Replace with project env var
 const String googleMapsApiKey = 'AIzaSyCqfjktNhxjKfM-JmpSwBk9KtgY429QWY8';
-const String apiBase = 'http://192.168.1.28:5002';
+const String apiBase = 'http://192.168.1.9:5002';
 
 const Map<String, String> vehicleAssets = {
   'bike': 'assets/images/bike.png',
@@ -42,7 +42,8 @@ class ShortTripPage extends StatefulWidget {
     this.vehicleType,
     this.initialPickup,
     this.initialDrop,
-    this.entryMode, required this.customerId,
+    this.entryMode, 
+    required this.customerId,
   }) : super(key: key);
 
   @override
@@ -69,6 +70,7 @@ Timer? _locationTimer;
   String _pickupState = '';
   String _pickupCity = '';
   String? _fare;
+  late final SocketService _socketService; // <-- Add this
 
   // Map & route
   gmaps.GoogleMapController? _mapController;
@@ -94,89 +96,58 @@ Timer? _locationTimer;
   void initState() {
     super.initState();
     _selectedVehicle = widget.vehicleType;
-     WidgetsBinding.instance.addPostFrameCallback((_) {
     _initializeData();
-    _setupSocketListeners(); // Remove the Future.delayed
-  });
-}
-  
-  // ✅ NEW: This function will set up our listeners.
-  // We separate it from connection logic, assuming connection is handled once per app session.
-  // short_trip_page.dart
 
-void _setupSocketListeners() {
-  final socketService = SocketService();
-  
-  print('🎧 Setting up socket listeners for customer: ${widget.customerId}');
-  
-  // Connect to socket
-    socketService.connectCustomer(customerId: widget.customerId);
+    _socketService = SocketService(); // <-- Use a single instance
 
-  // Wait for connection, then register
-  socketService.on('connect', (data) {
-    print('🟢 Socket connected: ${socketService.rawSocket?.id}');
-    Future.delayed(const Duration(milliseconds: 500), () {
-      print('👤 Registering customer: ${widget.customerId}');
-      socketService.connectCustomer(customerId: widget.customerId);
-    });
-  });
-  
-  // Listen for registration confirmation
-  socketService.on('customer:registered', (data) {
-    print('✅ Customer registered successfully: $data');
-  });
-  
-  // Primary trip accepted listener
-  socketService.on('trip:accepted', (data) {
-    print('🎯 TRIP ACCEPTED EVENT: $data');
-    _handleTripAccepted(data);
-  });
-}
+    _socketService.connect(apiBase);
+  _socketService.connectCustomer(customerId: widget.customerId);
 
-void _handleTripAccepted(Map<String, dynamic> data) {
-  print('🎯 Handling trip acceptance: $data');
-  
-  if (!mounted) return;
-
-  final receivedTripId = data['tripId']?.toString();
-  if (_currentTripId == null || receivedTripId != _currentTripId) {
-    print('⚠️ Trip ID mismatch - current: $_currentTripId, received: $receivedTripId');
-    return;
+    _setupSocketListeners();
   }
 
-  _rerequestTimer?.cancel();
-  setState(() => _isWaitingForDriver = false);
+  void _setupSocketListeners() {
+    _socketService.on('trip:accepted', (data) {
+      print("📢 Trip accepted: $data");
+      // Defensive: check keys
+      final driverDetails = data['driver'] ?? data['driverDetails'] ?? {};
+      final tripDetails = data['trip'] ?? data['tripDetails'] ?? {};
 
-  final driverDetails = data['driver'] as Map<String, dynamic>?;
-  final tripDetails = data['trip'] as Map<String, dynamic>?;
+      // If keys are missing, print the whole data for debugging
+      if (driverDetails.isEmpty || tripDetails.isEmpty) {
+        print("⚠️ Missing driver/trip details in event: $data");
+      }
 
-  print('👤 Driver details: $driverDetails');
-  print('🚗 Trip details: $tripDetails');
+      // Defensive: check context
+      if (!mounted) return;
 
-  // Validate driver details
-  if (driverDetails == null || driverDetails['id'] == null) {
-    print('❌ Invalid or missing driver details');
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        backgroundColor: Colors.red,
-        content: Text('Driver details missing'),
-      ),
-    );
-    return;
-  }
-
-  if (tripDetails != null) {
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => DriverEnRoutePage(
-          driverDetails: driverDetails,
-          tripDetails: tripDetails,
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DriverEnRoutePage(
+            driverDetails: driverDetails,
+            tripDetails: tripDetails,
+          ),
         ),
-      ),
-    );
+      );
+    });
+
+    _socketService.on('driver:locationUpdate', (data) {
+      final lat = data["latitude"];
+      final lng = data["longitude"];
+      if (lat is num && lng is num) {
+        if (!mounted) return;
+        setState(() {
+          _driverPosition = gmaps.LatLng(lat.toDouble(), lng.toDouble());
+          _updateMarkers();
+        });
+      }
+    });
   }
-}void _updateMarkers() {
+
+ 
+  
+void _updateMarkers() {
   _markers.clear();
 
   // Pickup marker
@@ -227,7 +198,7 @@ void _safeEmit(String event, dynamic data) {
 Future<void> _getFareEstimate() async {
 try {
 final response = await http.post(
-Uri.parse("http://192.168.1.28:5002/api/fare/estimate"),
+Uri.parse("http://192.168.1.9:5002/api/fare/estimate"),
 headers: {"Content-Type": "application/json"},
 body: jsonEncode({
 "pickup": _pickupController.text,
@@ -258,32 +229,23 @@ _safeEmit("customerRequestTripByType", {
 });
 debugPrint("🚕 Trip request emitted safely");
 }
- @override
+  @override
   void dispose() {
-    _rerequestTimer?.cancel();
-
-    final socketService = SocketService();
-    socketService.off('trip:accepted');
-    socketService.off('driver:locationUpdate');
-    socketService.off('customer:registered');
-    socketService.off('connect_error');
-    socketService.off('disconnect');
-
-    try {
-      socketService.rawSocket?.offAny();
-    } catch (e) {
-      print('⚠️ Error removing onAny listener: $e');
-    }
-
+        _rerequestTimer?.cancel(); 
+SocketService().off('trip:accepted');
+    SocketService().off('driver:locationUpdate');
     _pickupController.dispose();
     _dropController.dispose();
     _speech.stop();
     _debounce?.cancel();
     _mapController?.dispose();
+    _pickupController.dispose();
+_dropController.dispose();
+    super.dispose();
     _locationTimer?.cancel();
 
-    super.dispose();
   }
+
   Future<void> _initializeData() async {
     await _loadHistory();
 
@@ -842,6 +804,7 @@ debugPrint("🚕 Trip request emitted safely");
 
 
 Future<void> _confirmRide() async {
+  // 1. Validate that all necessary data (user, vehicle, locations) is available before proceeding.
   final user = FirebaseAuth.instance.currentUser;
   if (user == null || _selectedVehicle == null || _pickupPoint == null || _dropPoint == null) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -850,76 +813,83 @@ Future<void> _confirmRide() async {
     return;
   }
 
-  final rideData = {
-    "type": "short", // ✅ ADD THIS - Important for backend routing
-    "customerId": user.phoneNumber?.replaceAll('+91', '') ?? user.uid,
-    "pickup": {
-      "coordinates": [_pickupPoint!.longitude, _pickupPoint!.latitude],
-      "address": _pickupAddress,
-    },
-    "drop": {
-      "coordinates": [_dropPoint!.longitude, _dropPoint!.latitude],
-      "address": _dropAddress,
-    },
-    "vehicleType": _selectedVehicle!.toLowerCase().trim(),
-    "fare": _fares[_selectedVehicle],
-  };
+  // 2. Build the data payload for the backend, ensuring coordinates are in [longitude, latitude] order.
+  // ...existing code...
+final rideData = {
+  "customerId": widget.customerId, // <-- Use DB ID, not phone!
+  "pickup": {
+    "coordinates": [_pickupPoint!.longitude, _pickupPoint!.latitude],
+    "address": _pickupAddress,
+  },
+  "drop": {
+    "coordinates": [_dropPoint!.longitude, _dropPoint!.latitude],
+    "address": _dropAddress,
+  },
+  "vehicleType": _selectedVehicle!.toLowerCase().trim(),
+  "fare": _fares[_selectedVehicle],
+  "timestamp": DateTime.now().toIso8601String(),
+};
+// ...existing code...
+  debugPrint("🚨 Sending rideData: ${jsonEncode(rideData)}");
 
-  print("🚨 Sending rideData to /api/trip/short: ${jsonEncode(rideData)}");
-
-   try {
+  try {
+    // 3. Send the ride request to the server via an HTTP POST request.
     final response = await http.post(
       Uri.parse("$apiBase/api/trip/short"),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode(rideData),
     );
 
+    // 4. Handle the successful response from the server.
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      print("✅ Trip created on server: $data");
+      debugPrint("✅ Trip created on server: $data");
 
+      // 5. If a trip was created, start the 'waiting' UI and the 5-second re-request timer.
       if (data['tripId'] != null) {
         setState(() {
           _currentTripId = data['tripId'];
+          // Show the waiting UI only if the backend found drivers to notify.
           _isWaitingForDriver = data['drivers'] > 0;
         });
 
-        print("🎯 CURRENT TRIP ID SET TO: $_currentTripId");
-        print("🎯 WAITING FOR DRIVER: $_isWaitingForDriver");
-        print("🎯 CUSTOMER ID: ${widget.customerId}");
-       if (_isWaitingForDriver) {
-          _rerequestTimer?.cancel();
+        if (_isWaitingForDriver) {
+          _rerequestTimer?.cancel(); // Cancel any old timer before starting a new one.
           _rerequestTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
             if (!mounted) {
               timer.cancel();
               return;
             }
             print("🔁 Re-requesting trip: $_currentTripId");
+            // This event tells the backend to broadcast the request again to nearby drivers.
             SocketService().emit('trip:rerequest', {'tripId': _currentTripId});
           });
         }
       }
 
+      await _saveToHistory(_dropAddress);
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(_isWaitingForDriver ? 
-            'Searching for nearby drivers...' : 
-            'No drivers available right now.'),
+          content: Text(_isWaitingForDriver ? 'Searching for nearby drivers...' : 'No drivers available right now.'),
         ),
       );
     } else {
-      print("❌ Trip API failed: ${response.statusCode} ${response.body}");
+      // Handle API errors (e.g., 400, 500).
+      debugPrint("❌ Trip API failed: ${response.statusCode} ${response.body}");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Ride request failed: ${response.body}')),
       );
     }
   } catch (e) {
-    print("⚠️ Error calling trip API: $e");
+    // Handle network errors (e.g., no internet connection).
+    debugPrint("⚠️ Error calling trip API: $e");
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Failed to send ride request: $e')),
     );
   }
 }
+
 @override
 Widget build(BuildContext context) {
   return Scaffold(

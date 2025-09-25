@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 //import 'package:geolocator/geolocator.dart';
 
 /* ─── config ─── */
-const _BASE = 'http://192.168.1.28:5002';
+const _BASE = 'http://192.168.1.9:5002';
 
 class ParcelLiveTrackingPage extends StatefulWidget {
   final String customerId;

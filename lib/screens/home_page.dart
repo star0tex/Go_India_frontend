@@ -1,13 +1,13 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:go_china1/screens/car_trip_booking_page.dart';
 import 'package:http/http.dart' as http;
 import 'package:google_fonts/google_fonts.dart';
-import 'real_home_page.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'real_home_page.dart'; // Add this import
 
 class HomePage extends StatefulWidget {
   final String phone;
-  final String customerId; // <-- Add this
+  final String customerId;
 
   const HomePage({
     super.key,
@@ -35,44 +35,45 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    const String apiUrl = 'http://192.168.1.28:5002/api/user';
+    // Changed to use PUT method for updating existing user profile
+    final String apiUrl = 'http://192.168.1.9:5002/api/user/${widget.phone}';
 
     try {
       final payload = {
-        'phone': widget.phone,
         'name': _nameController.text.trim(),
         'gender': _selectedGender,
       };
 
-      final response = await http.post(
+      final response = await http.put( // Changed from POST to PUT
         Uri.parse(apiUrl),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(payload),
       );
 
-      final successCodes = {200, 201, 400};
-      if (successCodes.contains(response.statusCode)) {
+      if (response.statusCode == 200) {
         final responseData = jsonDecode(response.body);
         final msg = responseData['message'] ?? 'Profile saved.';
         _showToast(msg);
+        
         if (!mounted) return;
-        final userId = responseData['user']?['_id'] ?? responseData['userId'];
-        if (userId != null) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => LongTripPage(
-                  customerId: userId), // userId should be MongoDB _id
-            ),
-          );
-        } else {
-          _showToast('User ID not found in response.', isError: true);
-        }
+
+        // Store profile completion status
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('profileCompleted', true);
+
+        // Navigate to RealHomePage instead of LongTripPage
+        Navigator.pushReplacement( // Changed to pushReplacement for proper flow
+          context,
+          MaterialPageRoute(
+            builder: (context) => RealHomePage(customerId: widget.customerId),
+          ),
+        );
       } else {
-        _showToast('Failed: ${response.body}', isError: true);
+        final errorData = jsonDecode(response.body);
+        _showToast('Failed: ${errorData['message'] ?? 'Unknown error'}', isError: true);
       }
     } catch (e) {
-      _showToast('Error: $e', isError: true);
+      _showToast('Network error: $e', isError: true);
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -82,10 +83,10 @@ class _HomePageState extends State<HomePage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Center(child: Text(text, textAlign: TextAlign.center)),
-        backgroundColor: isError ? Colors.red[600] : Colors.transparent,
-        elevation: isError ? 2 : 0,
+        backgroundColor: isError ? Colors.red[600] : Colors.green[600], // Added success color
+        elevation: 2,
         behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
+        duration: Duration(seconds: isError ? 3 : 2), // Longer duration for errors
       ),
     );
   }
@@ -116,7 +117,7 @@ class _HomePageState extends State<HomePage> {
 
               const SizedBox(height: 8),
               Text(
-                'We’re almost there! 🚀',
+                'We\'re almost there! 🚀', // Fixed encoding
                 style: TextStyle(
                   fontSize: 16,
                   color: Colors.grey[700],
@@ -153,7 +154,7 @@ class _HomePageState extends State<HomePage> {
 
               // Footer Message
               Text(
-                "It’s a pleasure to have you, Rider!",
+                "It\'s a pleasure to have you, Rider!", // Fixed encoding
                 style: GoogleFonts.dancingScript(
                   fontSize: screenWidth * 0.055,
                   fontWeight: FontWeight.bold,
@@ -170,6 +171,7 @@ class _HomePageState extends State<HomePage> {
   Widget _inputBox(TextEditingController controller, String hintText) {
     return TextField(
       controller: controller,
+      enabled: !_isSaving, // Added to prevent editing while saving
       textAlign: TextAlign.center,
       decoration: InputDecoration(
         hintText: hintText,
@@ -199,7 +201,7 @@ class _HomePageState extends State<HomePage> {
           items: _genders
               .map((g) => DropdownMenuItem(value: g, child: Text(g)))
               .toList(),
-          onChanged: (v) => setState(() => _selectedGender = v!),
+          onChanged: _isSaving ? null : (v) => setState(() => _selectedGender = v!), // Disabled while saving
         ),
       ),
     );
@@ -207,12 +209,14 @@ class _HomePageState extends State<HomePage> {
 
   Widget _saveButton() {
     return GestureDetector(
-      onTap: _saveDetails,
+      onTap: _isSaving ? null : _saveDetails, // Prevent multiple taps while saving
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
-          color: const Color.fromRGBO(98, 205, 255, 1),
+          color: _isSaving 
+            ? Colors.grey[400] 
+            : const Color.fromRGBO(98, 205, 255, 1), // Visual feedback when disabled
           borderRadius: BorderRadius.circular(40),
         ),
         child: Center(

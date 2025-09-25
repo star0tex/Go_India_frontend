@@ -9,6 +9,7 @@ import 'parcel_location_page.dart';
 import 'car_trip_agreement_sheet.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
+
 import 'dart:async';
 import 'help_page.dart';
 import 'parcel_live_tracking_page.dart';
@@ -58,6 +59,7 @@ class _RealHomePageState extends State<RealHomePage>
   String phone = '';
   String rating = '';
   List<Map<String, dynamic>> locationHistory = [];
+String mongoCustomerId = ''; // <-- Add this to your state
 
   // Current location data
   double? _currentLat;
@@ -291,12 +293,14 @@ class _RealHomePageState extends State<RealHomePage>
   Future<void> _fetchUserProfile() async {
     try {
       final res =
-          await http.get(Uri.parse('http://192.168.1.28:5002/api/user/$phone'));
+          await http.get(Uri.parse('http://192.168.1.9:5002/api/user/$phone'));
       if (res.statusCode == 200) {
         final user = json.decode(res.body)['user'];
         setState(() {
           name = user['name'] ?? '';
           phone = user['phone'] ?? phone;
+                  mongoCustomerId = user['_id']; // <-- Store MongoDB ID here!
+
         });
         _loadLocationHistory();
       }
@@ -454,24 +458,27 @@ class _RealHomePageState extends State<RealHomePage>
     }
     if (dropLat != null && dropLng != null) {
       _saveToHistory(dropAddress, lat: dropLat, lng: dropLng);
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ShortTripPage(
-            args: TripArgs(
-              pickupLat: _currentLat!,
-              pickupLng: _currentLng!,
-              pickupAddress: _currentAddress,
-              dropAddress: dropAddress,
-              dropLat: dropLat,
-              dropLng: dropLng,
-              vehicleType: null,
-              showAllFares: true,
-            ),
-            entryMode: 'search', customerId: '',
-          ),
-        ),
-      ).then((_) => _fetchUserProfile());
+     // ...existing code...
+Navigator.push(
+  context,
+  MaterialPageRoute(
+    builder: (_) => ShortTripPage(
+      args: TripArgs(
+        pickupLat: _currentLat!,
+        pickupLng: _currentLng!,
+        pickupAddress: _currentAddress,
+        dropAddress: dropAddress,
+        dropLat: dropLat,
+        dropLng: dropLng,
+        vehicleType: null,
+        showAllFares: true,
+      ),
+      entryMode: 'search',
+      customerId: mongoCustomerId, // <-- Use MongoDB ID here!
+    ),
+  ),
+).then((_) => _fetchUserProfile());
+// ...existing code...
     } else {
       // If no lat/lng, geocode first
       _geocodeAndNavigate(dropAddress);
@@ -506,7 +513,8 @@ class _RealHomePageState extends State<RealHomePage>
                   vehicleType: null,
                   showAllFares: true,
                 ),
-                entryMode: 'search', customerId: '',
+                entryMode: 'search',       customerId: mongoCustomerId, // <-- Use MongoDB ID here!
+
               ),
             ),
           ).then((_) => _fetchUserProfile());
@@ -540,7 +548,8 @@ class _RealHomePageState extends State<RealHomePage>
             pickupAddress: _currentAddress,
             vehicleType: vehicleType,
             showAllFares: false,
-          ), customerId: '',
+          ),       customerId: mongoCustomerId, // <-- Use MongoDB ID here!
+
         ),
       ),
     ).then((_) => _fetchUserProfile());

@@ -37,7 +37,7 @@ class _CarTripBookingPageState extends State<LongTripPage> {
   bool _routing = false;
   bool _loadingFare = false;
 
-  final String apiBase = 'http://192.168.1.28:5002';
+  final String apiBase = 'http://192.168.1.9:5002';
   late io.Socket _socket;
 
   @override

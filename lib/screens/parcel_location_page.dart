@@ -577,7 +577,7 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
     final socketService = SocketService();
     
     // Connect to socket
-    socketService.connect("http://192.168.1.28:5002");
+    socketService.connect("http://192.168.1.9:5002");
     socketService.connectCustomer(customerId: widget.customerId);
 
     // Listen for trip acceptance
@@ -664,7 +664,7 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
       "category": "parcel",
     };
 
-    final url = Uri.parse("http://192.168.1.28:5002/api/parcels/estimate");
+    final url = Uri.parse("http://192.168.1.9:5002/api/parcels/estimate");
 
     final res = await http.post(
       url,
@@ -698,7 +698,7 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
 
     try {
       // Use trip controller for socket broadcasting
-      final url = Uri.parse("http://192.168.1.28:5002/api/trip/parcel");
+      final url = Uri.parse("http://192.168.1.9:5002/api/trip/parcel");
       
       // Calculate distance
       final distanceMeters = Geolocator.distanceBetween(

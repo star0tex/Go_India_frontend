@@ -68,47 +68,58 @@ class _LoginPageState extends State<LoginPage> {
 
     try {
       final res = await http.post(
-        Uri.parse("http://192.168.1.28:5002/api/auth/firebase-login"),
+        Uri.parse("http://192.168.1.9:5002/api/auth/firebase-login"),
         headers: {
           "Content-Type": "application/json",
           "Authorization": "Bearer $token",
         },
-        body: jsonEncode({"phone": "+91$phoneOnly"}),
-      );
+body: jsonEncode({
+            "idToken": token,                    // ✅ ADD: Send token in body too
+
+        "phone": "+91$phoneOnly",
+        "role": "customer",
+      }),      );
 
       Navigator.pop(context);
 
-      if (res.statusCode == 200) {
-        final data = json.decode(res.body);
-        print("Server response: $data"); // Debug log
+    if (res.statusCode == 200) {
+  final data = json.decode(res.body);
+  print("Server response: $data"); // Debug log
 
-        final isNewUser = data["newUser"] == true;
-        String customerId = (data["userId"] ?? "").toString();
+  final isNewUser = data["newUser"] == true;
+  
+  // ✅ Get userId from the correct field
+  String customerId = "";
+  if (data["user"] != null && data["user"]["_id"] != null) {
+    customerId = data["user"]["_id"].toString();
+  } else if (data["userId"] != null) {
+    customerId = data["userId"].toString();
+  } else {
+    // Fallback to phone number
+    customerId = phoneOnly;
+    print("⚠️ No userId from server, using phone number instead.");
+  }
 
-        // ✅ If server doesn't send customerId, use phoneOnly
-        if (customerId.isEmpty) {
-          print("⚠ No customerId from server, using phone number instead.");
-          customerId = phoneOnly;
-        }
+  // Store in SharedPreferences
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setString("customerId", customerId);
 
-        // Store in SharedPreferences
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString("customerId", customerId);
+  if (!isNewUser) {
+    _showError("Welcome back! 👋");
+  } else {
+    _showError("Account created successfully! 🎉");
+  }
 
-        if (!isNewUser) {
-          _showError("Welcome back! 👋");
-        }
+  final Widget next = isNewUser
+      ? HomePage(phone: phoneOnly, customerId: customerId)
+      : RealHomePage(customerId: customerId);
 
-        final Widget next = isNewUser
-            ? HomePage(phone: phoneOnly, customerId: customerId)
-            : RealHomePage(customerId: customerId);
-
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => next),
-        );
-        print("Navigation triggered to: $next");
-      } else {
+  Navigator.pushReplacement(
+    context,
+    MaterialPageRoute(builder: (context) => next),
+  );
+  print("Navigation triggered to: $next");
+} else {
         _showError("Login failed: ${res.body}");
       }
     } catch (e) {
