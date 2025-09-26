@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:go_china1/screens/driver_en_route_page.dart';
 import '../services/socket_service.dart';
 
 import 'package:flutter/material.dart';
@@ -553,6 +554,7 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
   // socket state
   String? _currentTripId;
   bool _isWaitingForDriver = false;
+    Map<String, dynamic>? _driverDetails; // <-- Add driver details state
 
   bool get allInputsFilled {
     return _nameController.text.isNotEmpty &&
@@ -581,20 +583,41 @@ class _ParcelLocationPageState extends State<ParcelLocationPage> {
     socketService.connectCustomer(customerId: widget.customerId);
 
     // Listen for trip acceptance
-    socketService.onTripAccepted((data) {
-      print("Driver accepted parcel: $data");
+    socketService.on('trip:accepted', (data) {
+      print("📢 Trip accepted: $data");
+      // Defensive: check keys
+      final driverDetails = data['driver'] ?? data['driverDetails'] ?? {};
+      final tripDetails = data['trip'] ?? data['tripDetails'] ?? {};
+
+      if (driverDetails.isEmpty || tripDetails.isEmpty) {
+        print("⚠️ Missing driver/trip details in trip:accepted: $data");
+      }
+
+      if (!mounted) return;
+
       setState(() {
         _isWaitingForDriver = false;
+        _driverDetails = driverDetails;
+        _currentTripId = tripDetails['tripId']?.toString();
       });
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Driver accepted your parcel delivery!"),
-            backgroundColor: Colors.green,
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Driver accepted your parcel delivery!"),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      // Push to DriverEnRoutePage for UI
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DriverEnRoutePage(
+            driverDetails: driverDetails,
+            tripDetails: tripDetails,
           ),
-        );
-      }
+        ),
+      );
     });
 
     // Listen for rejections/reassignments
