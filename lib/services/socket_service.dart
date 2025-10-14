@@ -1,297 +1,269 @@
 // lib/services/socket_service.dart
 import 'package:socket_io_client/socket_io_client.dart' as IO;
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-/// Customer app Socket.IO service (singleton)
-/// - Handles connect/reconnect
-/// - Registers customer identity (phone -> uid fallback)
-/// - Supports trip types: short | parcel | long
-/// - Exposes typed emit helpers + listeners
-// Optionally use an enum for safety when emitting trip by type
 enum TripType { short, parcel, long }
 
 class SocketService {
-  // ===== Singleton =====
+  // Singleton Setup
   static final SocketService _instance = SocketService._internal();
   factory SocketService() => _instance;
   SocketService._internal();
+  final String baseUrl = 'https://cd4ec7060b0b.ngrok-free.app'; // ✅ Replace with your server URL
 
+  // Private State
   IO.Socket? _socket;
   String? _baseUrl;
+  String? _lastUsedCustomerId;
 
-  // Keep references to handlers so we can rebind after reconnect
+  // Event handler references for rebinding
   void Function(Map<String, dynamic>)? _onTripAcceptedHandler;
   void Function(Map<String, dynamic>)? _onTripRejectedBySystemHandler;
   void Function(Map<String, dynamic>)? _onDriverLiveLocationHandler;
   void Function(Map<String, dynamic>)? _onRideConfirmedHandler;
   void Function(Map<String, dynamic>)? _onLongTripStandbyHandler;
 
+  // Public Getters
   bool get isConnected => _socket?.connected ?? false;
   IO.Socket? get rawSocket => _socket;
 
+  // Core Methods
 
+  void connect(String baseUrl) {
+    if (_socket != null && _baseUrl == baseUrl && _socket!.connected) {
+      print('Socket already connected to $baseUrl.');
+      return;
+    }
 
-  /// Connect to Socket.IO server.
-  /// Call once per app session (or page open) with the base URL, e.g. http://192.168.1.16:5002
-void connect(String baseUrl) {
-  if (_socket != null && _baseUrl == baseUrl && _socket!.connected) {
-    return;
+    _baseUrl = baseUrl;
+    _cleanupSocket();
+
+    _socket = IO.io(
+      baseUrl,
+      IO.OptionBuilder()
+          .setTransports(['websocket'])
+          .disableAutoConnect()
+          .enableReconnection()
+          .setReconnectionDelay(1000)
+          .setReconnectionDelayMax(5000)
+          .setReconnectionAttempts(5)
+          .build(),
+    );
+
+    _socket!.onConnect((_) {
+      print('Socket connected: ${_socket!.id}');
+      _reRegisterCustomerAndListeners();
+    });
+
+    _socket!.onReconnect((_) {
+      print('Socket reconnected: ${_socket!.id}');
+      _reRegisterCustomerAndListeners();
+    });
+
+    _socket!.onDisconnect((_) => print('Socket disconnected'));
+    _socket!.onConnectError((error) => print('Socket connection error: $error'));
+    _socket!.onError((error) => print('Socket error: $error'));
+
+    _socket!.connect();
   }
 
-  _baseUrl = baseUrl;
-
-  try {
-    _socket?.disconnect();
-    try {
-      _socket?.close();
-    } catch (_) {}
-    try {
-      _socket?.dispose();
-    } catch (_) {}
-  } catch (_) {}
-
-  _socket = IO.io(
-    baseUrl,
-    IO.OptionBuilder()
-        .setTransports(['websocket'])
-        .disableAutoConnect()
-        .enableReconnection()
-        .setReconnectionAttempts(-1)   // ✅ unlimited, safe
-        .setReconnectionDelay(1000)    // 1 second initial delay
-        .build(),
-  );
-
-  _socket!.onConnect((_) {
-    print('🟢 Socket connected -> $_baseUrl (id: ${_socket!.id})');
-    _reRegisterCustomerIfPossible();
-  });
-
-  _socket!.onReconnect((_) {
-    print('♻️ Socket reconnected (id: ${_socket!.id})');
-    _reRegisterCustomerIfPossible();
-  });
-
-  _socket!.onReconnectAttempt((attempt) {
-    print('… reconnecting to $_baseUrl (attempt $attempt)');
-  });
-
-  _socket!.onDisconnect((_) {
-    print('🔴 Socket disconnected');
-  });
-
-  _socket!.onError((err) {
-    print('⚠️ Socket error: $err');
-  });
-
-  _socket!.connect();
-}
-  /// Registers this connection as a Customer on the backend.
-  /// If [customerId] is omitted, it tries Firebase phoneNumber, then uid.
+  /// Registers the customer using MongoDB _id from SharedPreferences or login response
   Future<void> connectCustomer({String? customerId}) async {
-    if (_socket == null) {
-      print(
-          '⚠️ connectCustomer called before connect(). Call connect(baseUrl) first.');
+    if (_socket == null || !_socket!.connected) {
+      print('Cannot connect customer: socket is not connected.');
       return;
     }
 
     final idToUse = await _resolveCustomerId(explicitId: customerId);
     if (idToUse == null || idToUse.isEmpty) {
-      print(
-          '❌ No Firebase user and no customerId provided; cannot register customer.');
+      print('Could not resolve a customer ID. Cannot register.');
       return;
     }
+    
+    _lastUsedCustomerId = idToUse;
 
+    print('Registering customer with ID: $idToUse');
     _socket!.emit('customer:register', {'customerId': idToUse});
-    print('📡 customer:register -> $idToUse');
+
+    // Listen for registration confirmation
+    _socket!.once('customer:registered', (data) {
+      final response = _toMap(data);
+      if (response['success'] == true) {
+        print('Customer registration successful:');
+        print('  MongoDB ID: ${response['mongoId']}');
+        print('  Socket ID: ${response['socketId']}');
+        print('  Phone: ${response['phone']}');
+      } else {
+        print('Customer registration failed: ${response['error']}');
+        print('  Provided ID: ${response['providedId']}');
+        print('  Hint: ${response['hint']}');
+      }
+    });
   }
 
-  /// Legacy alias
-  void connectCustomerLegacy(String customerId) {
-    connectCustomer(customerId: customerId);
+  void disconnect() {
+    _lastUsedCustomerId = null;
+    _cleanupSocket();
+    print('Socket disconnected and disposed by client.');
   }
 
-  /// Emit a trip request with only a tripId (legacy/back-compat).
-  void emitCustomerRequestTrip(String tripId) {
-    if (_socket == null) {
-      print('⚠️ emitCustomerRequestTrip before connect().');
+  // Event Emitters
+
+  void emitCustomerRequestTripByType(TripType type, Map<String, dynamic> rideData) {
+    if (!isConnected) {
+      print('Socket not connected. Cannot send trip request.');
       return;
     }
-    _socket!.emit('customer:request_trip', {'tripId': tripId});
-    print('📤 customer:request_trip -> $tripId');
-  }
-
-  /// Legacy helper used by older pages expecting to send the whole rideData map.
-  void sendRideRequest(Map<String, dynamic> rideData) {
-    if (_socket != null && _socket!.connected) {
-      _socket!.emit('customer:request_trip', rideData);
-      print('📤 Ride request sent: $rideData');
-    } else {
-      print('⚠️ Socket not connected. Ride request not sent.');
-    }
-  }
-
-  /// Emit a trip request specifying the category:
-  /// - TripType.short   -> short trip (auto + bike + car as per backend rules)
-  /// - TripType.parcel  -> parcel (bike only)
-  /// - TripType.long    -> long trip (car only)
-  void emitCustomerRequestTripByType(
-      TripType type, Map<String, dynamic> rideData) {
-    if (_socket == null) {
-      print('⚠️ emitCustomerRequestTripByType before connect().');
-      return;
-    }
+    
     final payload = {
-      'type': type.name, // "short" | "parcel" | "long"
-      'data': rideData,
+      'type': type.name,
+      ...rideData, // Merge ride data directly
     };
+    
+    print('Emitting [${type.name}] trip request: $payload');
     _socket!.emit('customer:request_trip', payload);
-    print('📤 ${type.name}_trip request sent: $payload');
   }
 
-  // ========= Event Listeners (with rebind support) =========
+  void sendRideRequest(Map<String, dynamic> rideData) {
+    if (!isConnected) {
+      print('Socket not connected. Ride request not sent.');
+      return;
+    }
+    _socket!.emit('customer:request_trip', rideData);
+    print('Sending ride request: $rideData');
+  }
+
+  // Event Listeners
 
   void onTripAccepted(void Function(Map<String, dynamic> data) handler) {
     _onTripAcceptedHandler = handler;
     _socket?.off('trip:accepted');
     _socket?.on('trip:accepted', (data) {
       final map = _toMap(data);
-      print('✅ trip:accepted -> $map');
+      print('Received [trip:accepted]: ${map.keys}');
       handler(map);
     });
   }
 
-  void onTripRejectedBySystem(
-      void Function(Map<String, dynamic> data) handler) {
+  void onTripRejectedBySystem(void Function(Map<String, dynamic> data) handler) {
     _onTripRejectedBySystemHandler = handler;
-
-    // New canonical name
-    _socket?.off('trip:rejected_by_system');
-    _socket?.on('trip:rejected_by_system', (data) {
+    const eventName = 'trip:rejected_by_system';
+    _socket?.off(eventName);
+    _socket?.on(eventName, (data) {
       final map = _toMap(data);
-      print('🚫 trip:rejected_by_system -> $map');
+      print('Received [$eventName]: $map');
       handler(map);
     });
-
-    // Backward-compatible legacy name
-    _socket?.off('tripRejectedBySystem');
-    _socket?.on('tripRejectedBySystem', (data) {
-      final map = _toMap(data);
-      print('🚫 tripRejectedBySystem -> $map');
-      handler(map);
-    });
-  }
-
-  // Alias kept for your existing code that expects "ride rejected"
-  void onRideRejected(void Function(Map<String, dynamic> data) handler) {
-    onTripRejectedBySystem(handler);
   }
 
   void onDriverLiveLocation(void Function(Map<String, dynamic> data) handler) {
     _onDriverLiveLocationHandler = handler;
-    _socket?.off('driverLiveLocation');
-    _socket?.on('driverLiveLocation', (data) {
+    const eventName = 'driverLiveLocation';
+    _socket?.off(eventName);
+    _socket?.on(eventName, (data) {
       final map = _toMap(data);
-      print('📍 driverLiveLocation -> $map');
       handler(map);
     });
   }
 
   void onRideConfirmed(void Function(Map<String, dynamic> data) handler) {
     _onRideConfirmedHandler = handler;
-    _socket?.off('rideConfirmed');
-    _socket?.on('rideConfirmed', (data) {
+    const eventName = 'rideConfirmed';
+    _socket?.off(eventName);
+    _socket?.on(eventName, (data) {
       final map = _toMap(data);
-      print('✅ rideConfirmed -> $map');
+      print('Received [$eventName]: $map');
       handler(map);
     });
   }
 
-  /// Long trip standby (e.g., waiting room/queue before manual/auto assign)
   void onLongTripStandby(void Function(Map<String, dynamic> data) handler) {
     _onLongTripStandbyHandler = handler;
-    _socket?.off('longTrip:standby');
-    _socket?.on('longTrip:standby', (data) {
+    const eventName = 'longTrip:standby';
+    _socket?.off(eventName);
+    _socket?.on(eventName, (data) {
       final map = _toMap(data);
-      print('🟡 longTrip:standby -> $map');
+      print('Received [$eventName]: $map');
       handler(map);
     });
   }
 
-  // ========= Generic Utilities =========
+  // Generic Utilities
 
-  void emit(String event, Map<String, dynamic> data) {
+  void emit(String event, dynamic data) {
     _socket?.emit(event, data);
   }
 
-  void on(String event, void Function(Map<String, dynamic> data) handler) {
-    _socket?.off(event);
-    _socket?.on(event, (data) => handler(_toMap(data)));
+  void on(String event, Function(dynamic) handler) {
+    _socket?.on(event, handler);
   }
-
+  
   void off(String event) {
     _socket?.off(event);
   }
 
-  void disconnect() {
-    try {
-      _socket?.disconnect();
-      // ignore: empty_catches
-      try {
-        _socket?.close();
-      } catch (_) {}
-      // ignore: empty_catches
-      try {
-        _socket?.dispose();
-      } catch (_) {}
-    } catch (_) {}
-    _socket = null;
-    print('🔌 Socket disposed');
+  // Private Helpers
+
+  Future<void> _reRegisterCustomerAndListeners() async {
+    if (_lastUsedCustomerId != null) {
+      await connectCustomer(customerId: _lastUsedCustomerId);
+    } else {
+      await connectCustomer();
+    }
+
+    print('Re-binding event listeners...');
+    if (_onTripAcceptedHandler != null) onTripAccepted(_onTripAcceptedHandler!);
+    if (_onTripRejectedBySystemHandler != null) onTripRejectedBySystem(_onTripRejectedBySystemHandler!);
+    if (_onDriverLiveLocationHandler != null) onDriverLiveLocation(_onDriverLiveLocationHandler!);
+    if (_onRideConfirmedHandler != null) onRideConfirmed(_onRideConfirmedHandler!);
+    if (_onLongTripStandbyHandler != null) onLongTripStandby(_onLongTripStandbyHandler!);
   }
 
-  // ========= Private Helpers =========
-
-  /// Resolve a customer id using priority: explicitId > phoneNumber > uid
+  /// Resolves customer ID with priority:
+  /// 1. Explicitly provided ID (should be MongoDB _id)
+  /// 2. Stored customerId from SharedPreferences (from login)
+  /// 3. Stored phone number as fallback
   Future<String?> _resolveCustomerId({String? explicitId}) async {
     if (explicitId != null && explicitId.trim().isNotEmpty) {
+      print('Using explicit customer ID: $explicitId');
       return explicitId.trim();
     }
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return null;
-    final phone = user.phoneNumber;
-    if (phone != null && phone.trim().isNotEmpty) return phone.trim();
-    return user.uid;
-  }
 
-  /// Re-register & rebind listeners on connect/reconnect
-  Future<void> _reRegisterCustomerIfPossible() async {
-    final idToUse = await _resolveCustomerId();
-    if (idToUse == null || idToUse.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      
+      // First try to get the MongoDB _id stored during login
+      final storedCustomerId = prefs.getString('customerId');
+      if (storedCustomerId != null && storedCustomerId.trim().isNotEmpty) {
+        print('Using stored customerId: $storedCustomerId');
+        return storedCustomerId.trim();
+      }
 
-    _socket?.emit('customer:register', {'customerId': idToUse});
-    print('↪️ Re-register on (re)connect -> $idToUse');
+      // Fallback to phone number
+      final storedPhone = prefs.getString('phoneNumber');
+      if (storedPhone != null && storedPhone.trim().isNotEmpty) {
+        print('Using stored phone as customer ID: $storedPhone');
+        return storedPhone.trim();
+      }
 
-    // Re-bind listeners if handlers were set previously
-    if (_onTripAcceptedHandler != null) {
-      onTripAccepted(_onTripAcceptedHandler!);
-    }
-    if (_onTripRejectedBySystemHandler != null) {
-      onTripRejectedBySystem(_onTripRejectedBySystemHandler!);
-    }
-    if (_onDriverLiveLocationHandler != null) {
-      onDriverLiveLocation(_onDriverLiveLocationHandler!);
-    }
-    if (_onRideConfirmedHandler != null) {
-      onRideConfirmed(_onRideConfirmedHandler!);
-    }
-    if (_onLongTripStandbyHandler != null) {
-      onLongTripStandby(_onLongTripStandbyHandler!);
+      print('No customer ID found in SharedPreferences');
+      return null;
+    } catch (e) {
+      print('Error resolving customer ID: $e');
+      return null;
     }
   }
 
+  void _cleanupSocket() {
+    _socket?.disconnect();
+    _socket?.dispose();
+    _socket = null;
+  }
+  
   Map<String, dynamic> _toMap(dynamic data) {
     if (data is Map<String, dynamic>) return data;
     if (data is Map) {
-      return data.map((k, v) => MapEntry(k.toString(), v));
+      return data.map((key, value) => MapEntry(key.toString(), value));
     }
     return {'data': data};
   }

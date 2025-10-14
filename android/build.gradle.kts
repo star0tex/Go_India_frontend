@@ -2,7 +2,7 @@
 
 buildscript {
     dependencies {
-        classpath("com.google.gms:google-services:4.3.15")
+        classpath("com.google.gms:google-services:4.4.2")
     }
     repositories {
         google()
@@ -10,7 +10,7 @@ buildscript {
     }
 }
 
-extra["minSdkVersion"] = 23
+extra["minSdkVersion"] = 21  // Changed from 23 to 21 for Firebase Auth
 
 allprojects {
     repositories {
@@ -39,5 +39,5 @@ subprojects {
 }
 
 tasks.register<Delete>("clean") {
-    delete(rootProject.buildDir)
+    delete(rootProject.layout.buildDirectory)
 }

@@ -1,29 +1,24 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+// Basic widget smoke test adapted for IndianRideApp.
+// This verifies the app builds and shows the expected splash title without
+// relying on counter template artifacts.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_china1/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
+  testWidgets('App builds without pending timers', (WidgetTester tester) async {
+    // Build the app and trigger a frame.
     await tester.pumpWidget(const IndianRideApp());
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    // Initial frame should contain the splash title.
+    expect(find.byType(MaterialApp), findsOneWidget);
+    expect(find.text('Indian Ride'), findsOneWidget);
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    // Let the splash timer elapse so no timers remain pending.
+    await tester.pump(const Duration(seconds: 4));
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Still renders a MaterialApp and no test-time timer assertions should fire.
+    expect(find.byType(MaterialApp), findsOneWidget);
   });
 }

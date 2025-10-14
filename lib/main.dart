@@ -6,9 +6,9 @@ import 'screens/splash_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
-
+  
   // ✅ Correct: Connect to the socket BEFORE running the app.
-  SocketService().connect("http://192.168.1.9:5002"); // Use your IP
+  SocketService().connect("https://cd4ec7060b0b.ngrok-free.app"); // Use your IP
 
   // Now run the app, which can safely use the connected service.
   runApp(const IndianRideApp());

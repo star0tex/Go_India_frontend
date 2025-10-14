@@ -36,7 +36,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     // Changed to use PUT method for updating existing user profile
-    final String apiUrl = 'http://192.168.1.9:5002/api/user/${widget.phone}';
+    final String apiUrl = 'https://cd4ec7060b0b.ngrok-free.app/api/user/${widget.phone}';
 
     try {
       final payload = {

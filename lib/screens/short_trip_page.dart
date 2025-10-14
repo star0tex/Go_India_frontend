@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 import 'package:geolocator/geolocator.dart';
@@ -11,10 +13,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../services/socket_service.dart';
 import 'models/trip_args.dart';
-import 'driver_en_route_page.dart'; // ✅ NEW: Import the new page
-// TODO: Replace with project env var
+import 'driver_en_route_page.dart';
+
 const String googleMapsApiKey = 'AIzaSyCqfjktNhxjKfM-JmpSwBk9KtgY429QWY8';
-const String apiBase = 'http://192.168.1.9:5002';
+const String apiBase = 'https://cd4ec7060b0b.ngrok-free.app';
 
 const Map<String, String> vehicleAssets = {
   'bike': 'assets/images/bike.png',
@@ -27,6 +29,73 @@ const Map<String, String> vehicleAssets = {
 const List<String> vehicleLabels = ['bike', 'auto', 'car', 'premium', 'xl'];
 const List<String> invalidHistoryTerms = ['auto', 'bike', 'car'];
 
+// Enhanced Color Palette
+class AppColors {
+  static const Color primary = Color(0xFF6C5CE7);
+  static const Color primaryDark = Color(0xFF5A4FCF);
+  static const Color accent = Color(0xFFFF6B6B);
+  static const Color accentLight = Color(0xFFFF8E8E);
+  static const Color success = Color(0xFF00D684);
+  static const Color warning = Color(0xFFFFB800);
+  static const Color error = Color(0xFFFF4757);
+  static const Color background = Color(0xFF0A0A0F);
+  static const Color surface = Color(0xFF1A1A24);
+  static const Color surfaceLight = Color(0xFF2A2A38);
+  static const Color onSurface = Color(0xFFFFFFFF);
+  static const Color onSurfaceSecondary = Color(0xFFB8B8D1);
+  static const Color onSurfaceTertiary = Color(0xFF8E8EA9);
+  static const Color divider = Color(0xFF2A2A38);
+  static const Color shimmer = Color(0xFF3A3A4A);
+}
+
+// Enhanced Typography
+class AppTextStyles {
+  static TextStyle get heading1 => GoogleFonts.plusJakartaSans(
+        fontSize: 32,
+        fontWeight: FontWeight.w800,
+        color: AppColors.onSurface,
+        letterSpacing: -0.5,
+      );
+
+  static TextStyle get heading2 => GoogleFonts.plusJakartaSans(
+        fontSize: 24,
+        fontWeight: FontWeight.w700,
+        color: AppColors.onSurface,
+        letterSpacing: -0.3,
+      );
+
+  static TextStyle get heading3 => GoogleFonts.plusJakartaSans(
+        fontSize: 18,
+        fontWeight: FontWeight.w600,
+        color: AppColors.onSurface,
+      );
+
+  static TextStyle get body1 => GoogleFonts.plusJakartaSans(
+        fontSize: 16,
+        fontWeight: FontWeight.w500,
+        color: AppColors.onSurface,
+      );
+
+  static TextStyle get body2 => GoogleFonts.plusJakartaSans(
+        fontSize: 14,
+        fontWeight: FontWeight.w500,
+        color: AppColors.onSurfaceSecondary,
+      );
+
+  static TextStyle get caption => GoogleFonts.plusJakartaSans(
+        fontSize: 12,
+        fontWeight: FontWeight.w500,
+        color: AppColors.onSurfaceTertiary,
+        letterSpacing: 0.5,
+      );
+
+  static TextStyle get button => GoogleFonts.plusJakartaSans(
+        fontSize: 16,
+        fontWeight: FontWeight.w700,
+        color: AppColors.onSurface,
+      );
+}
+
 class ShortTripPage extends StatefulWidget {
   final String? vehicleType;
   final String customerId;
@@ -35,14 +104,13 @@ class ShortTripPage extends StatefulWidget {
   final Map<String, dynamic>? initialDrop;
   final String? entryMode;
 
-  // ignore: use_super_parameters
   const ShortTripPage({
     Key? key,
     required this.args,
     this.vehicleType,
     this.initialPickup,
     this.initialDrop,
-    this.entryMode, 
+    this.entryMode,
     required this.customerId,
   }) : super(key: key);
 
@@ -50,19 +118,35 @@ class ShortTripPage extends StatefulWidget {
   State<ShortTripPage> createState() => _ShortTripPageState();
 }
 
-class _ShortTripPageState extends State<ShortTripPage> {
-  // Screen management
-  gmaps.LatLng? _driverPosition;
-Set<gmaps.Marker> _markers = {};
-Timer? _locationTimer;
- // ✅ NEW: State variables for waiting logic
-  bool _isWaitingForDriver = false;
-  String? _currentTripId;
-  Timer? _rerequestTimer;
-  int _screenIndex = 0; // 0: Search screen, 1: Map+Fare screen
-  // Location data
+class _ShortTripPageState extends State<ShortTripPage>
+    with TickerProviderStateMixin {
+  // Animation Controllers
+  late AnimationController _fadeController;
+  late AnimationController _slideController;
+  late AnimationController _pulseController;
+  late AnimationController _shimmerController;
+
+  late Animation<double> _fadeAnimation;
+  late Animation<Offset> _slideAnimation;
+  late Animation<double> _pulseAnimation;
+  late Animation<double> _shimmerAnimation;
+final Map<String, double> _defaultFares = {
+  "bike": 25.0,
+  "auto": 40.0,
+  "car": 80.0,
+};
+final Map<String, double> _fares = {}; // Fetched fares from API
+
+  // Focus nodes
+  final FocusNode _pickupFocusNode = FocusNode();
+  final FocusNode _dropFocusNode = FocusNode();
+  String _activeField = 'pickup';
+
+  // Controllers and state
   final TextEditingController _pickupController = TextEditingController();
   final TextEditingController _dropController = TextEditingController();
+
+  // Location data
   gmaps.LatLng? _pickupPoint;
   gmaps.LatLng? _dropPoint;
   String _pickupAddress = '';
@@ -70,63 +154,157 @@ Timer? _locationTimer;
   String _pickupState = '';
   String _pickupCity = '';
   String? _fare;
-  late final SocketService _socketService; // <-- Add this
 
   // Map & route
   gmaps.GoogleMapController? _mapController;
   List<gmaps.LatLng> _routePoints = [];
   double? _distanceKm;
   double? _durationSec;
+  Set<gmaps.Marker> _markers = {};
+  List<gmaps.LatLng> _onlineDrivers = [];
+  gmaps.BitmapDescriptor? _bikeLiveIcon;
+  gmaps.LatLng? _driverPosition;
+  Timer? _locationTimer;
 
-  // Speech
+  // Services
+  late final SocketService _socketService;
   final stt.SpeechToText _speech = stt.SpeechToText();
-  bool _isListening = false;
 
-  // History & suggestions
+  // UI State
+  int _screenIndex = 0;
+  bool _isListening = false;
+  bool _isWaitingForDriver = false;
+  String? _currentTripId;
+  Timer? _rerequestTimer;
+
+  // Data
   List<String> _history = [];
   List<Map<String, dynamic>> _suggestions = [];
   Timer? _debounce;
-
-  // Fare calculation
-  Map<String, double> _fares = {};
   bool _loadingFares = false;
   String? _selectedVehicle;
 
   @override
   void initState() {
     super.initState();
+    _initializeAnimations();
+    _setupFocusListeners();
     _selectedVehicle = widget.vehicleType;
     _initializeData();
-
-    _socketService = SocketService(); // <-- Use a single instance
-
-    _socketService.connect(apiBase);
-  _socketService.connectCustomer(customerId: widget.customerId);
-
-    _setupSocketListeners();
+    _setupSocketService();
+    _loadBikeLiveIcon();
+    _fetchNearbyDrivers();
   }
 
-  void _setupSocketListeners() {
+  void _initializeAnimations() {
+    _fadeController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+    _slideController = AnimationController(
+      duration: const Duration(milliseconds: 400),
+      vsync: this,
+    );
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    );
+    _shimmerController = AnimationController(
+      duration: const Duration(milliseconds: 1500),
+      vsync: this,
+    );
+
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _fadeController, curve: Curves.easeOutCubic),
+    );
+    _slideAnimation = Tween<Offset>(
+      begin: const Offset(0, 0.3),
+      end: Offset.zero,
+    ).animate(
+        CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic));
+    _pulseAnimation = Tween<double>(begin: 0.8, end: 1.2).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.elasticOut),
+    );
+    _shimmerAnimation = Tween<double>(begin: -1.0, end: 2.0).animate(
+      CurvedAnimation(parent: _shimmerController, curve: Curves.linear),
+    );
+
+    _fadeController.forward();
+    _slideController.forward();
+    _pulseController.repeat(reverse: true);
+    _shimmerController.repeat();
+  }
+
+  void _setupFocusListeners() {
+    _pickupFocusNode.addListener(() {
+      if (_pickupFocusNode.hasFocus) {
+        setState(() => _activeField = 'pickup');
+        HapticFeedback.selectionClick();
+      }
+    });
+    _dropFocusNode.addListener(() {
+      if (_dropFocusNode.hasFocus) {
+        setState(() => _activeField = 'drop');
+        HapticFeedback.selectionClick();
+      }
+    });
+  }
+
+  void _setupSocketService() {
+    _socketService = SocketService();
+    _socketService.connect(apiBase);
+    _socketService.connectCustomer(customerId: widget.customerId);
+    _setupSocketListeners();
+  }
+Future<String?> _getFirebaseToken() async {
+  try {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return null;
+    return await user.getIdToken();
+  } catch (e) {
+    debugPrint('Error getting Firebase token: $e');
+    return null;
+  }
+}
+
+ void _setupSocketListeners() {
     _socketService.on('trip:accepted', (data) {
-      print("📢 Trip accepted: $data");
-      // Defensive: check keys
+      debugPrint("==========================================");
+      debugPrint("🔔 Trip accepted event received!");
+      debugPrint("📦 Full data: $data");
+      debugPrint("🔑 Data keys: ${data.keys}");
+      debugPrint("🎫 rideCode value: ${data['rideCode']}");
+      debugPrint("🆔 tripId value: ${data['tripId']}");
+      debugPrint("==========================================");
+      
       final driverDetails = data['driver'] ?? data['driverDetails'] ?? {};
       final tripDetails = data['trip'] ?? data['tripDetails'] ?? {};
 
-      // If keys are missing, print the whole data for debugging
       if (driverDetails.isEmpty || tripDetails.isEmpty) {
-        print("⚠️ Missing driver/trip details in event: $data");
+        debugPrint("❌ Missing driver/trip details in event: $data");
       }
 
-      // Defensive: check context
       if (!mounted) return;
+
+      // ✅ Convert to Map<String, dynamic> and add rideCode and tripId
+      final enrichedTripDetails = <String, dynamic>{
+        ...Map<String, dynamic>.from(tripDetails),
+        'rideCode': data['rideCode'],
+        'tripId': data['tripId'],
+      };
+
+      debugPrint("✅ Enriched tripDetails: $enrichedTripDetails");
+      debugPrint("✅ rideCode in enriched: ${enrichedTripDetails['rideCode']}");
+
+      // ✅ Also convert driverDetails to proper type
+      final typedDriverDetails = Map<String, dynamic>.from(driverDetails);
 
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => DriverEnRoutePage(
-            driverDetails: driverDetails,
-            tripDetails: tripDetails,
+            driverDetails: typedDriverDetails,
+            tripDetails: enrichedTripDetails,
           ),
         ),
       );
@@ -143,113 +321,115 @@ Timer? _locationTimer;
         });
       }
     });
+  } Future<void> _loadBikeLiveIcon() async {
+    try {
+      final bitmap = await gmaps.BitmapDescriptor.fromAssetImage(
+        const ImageConfiguration(size: Size(64, 64)),
+        'assets/images/bikelive.png',
+      );
+      setState(() {
+        _bikeLiveIcon = bitmap;
+      });
+      _updateMarkers();
+    } catch (e) {
+      debugPrint('Failed to load bike icon: $e');
+    }
   }
 
- 
+ Future<void> _fetchNearbyDrivers() async {
+  if (_pickupPoint == null) return;
   
-void _updateMarkers() {
-  _markers.clear();
+  try {
+    // ✅ Get Firebase token
+    final token = await _getFirebaseToken();
+    if (token == null) {
+      debugPrint('No Firebase token available');
+      return;
+    }
 
-  // Pickup marker
-  if (_pickupPoint != null) {
-    _markers.add(gmaps.Marker(
-      markerId: const gmaps.MarkerId("pickup"),
-      position: _pickupPoint!,
-      icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
-        gmaps.BitmapDescriptor.hueGreen,
-      ),
-    ));
-  }
-
-  // Drop marker
-  if (_dropPoint != null) {
-    _markers.add(gmaps.Marker(
-      markerId: const gmaps.MarkerId("drop"),
-      position: _dropPoint!,
-      icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
-        gmaps.BitmapDescriptor.hueRed,
-      ),
-    ));
-  }
-
-  // Driver marker
-  if (_driverPosition != null) {
-    _markers.add(gmaps.Marker(
-      markerId: const gmaps.MarkerId("driver"),
-      position: _driverPosition!,
-      icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
-        gmaps.BitmapDescriptor.hueBlue,
-      ),
-    ));
-  }
-
-  // Trigger refresh on map
-  setState(() {});
-}
-
-
-void _safeEmit(String event, dynamic data) {
-  if (SocketService().isConnected) {
-    SocketService().emit(event, data);
-  } else {
-    debugPrint("⚠️ Socket not connected. Event '$event' not sent immediately.");
+    final url = Uri.parse(
+      '$apiBase/api/driver/nearby?lat=${_pickupPoint!.latitude}&lng=${_pickupPoint!.longitude}&radius=2',
+    );
+    
+    // ✅ Add Authorization header
+    final response = await http.get(
+      url,
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+    );
+    
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      if (data is List) {
+        setState(() {
+          _onlineDrivers = data.map<gmaps.LatLng>((item) {
+            return gmaps.LatLng(item['lat'], item['lng']);
+          }).toList();
+        });
+        _updateMarkers();
+      }
+    } else if (response.statusCode == 401) {
+      debugPrint('Authentication failed - token may be expired');
+      // Optionally refresh token and retry
+    } else {
+      debugPrint('Failed to fetch drivers: ${response.statusCode}');
+    }
+  } catch (e) {
+    debugPrint('Error fetching nearby drivers: $e');
   }
 }
-Future<void> _getFareEstimate() async {
-try {
-final response = await http.post(
-Uri.parse("http://192.168.1.9:5002/api/fare/estimate"),
-headers: {"Content-Type": "application/json"},
-body: jsonEncode({
-"pickup": _pickupController.text,
-"dropoff": _dropController.text,
-}),
-);
+  void _updateMarkers() {
+    _markers.clear();
 
+    if (_pickupPoint != null) {
+      _markers.add(gmaps.Marker(
+        markerId: const gmaps.MarkerId("pickup"),
+        position: _pickupPoint!,
+        icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+          gmaps.BitmapDescriptor.hueGreen,
+        ),
+      ));
+    }
 
-if (response.statusCode == 200) {
-final data = jsonDecode(response.body);
-setState(() {
-_fare = data['fare'].toString();
-});
-} else {
-debugPrint("❌ Fare API failed: ${response.statusCode}");
-}
-} catch (e) {
-debugPrint("⚠️ Fare fetch error: $e");
-}
-}
+    if (_dropPoint != null) {
+      _markers.add(gmaps.Marker(
+        markerId: const gmaps.MarkerId("drop"),
+        position: _dropPoint!,
+        icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+          gmaps.BitmapDescriptor.hueRed,
+        ),
+      ));
+    }
 
+    if (_driverPosition != null) {
+      _markers.add(gmaps.Marker(
+        markerId: const gmaps.MarkerId("driver"),
+        position: _driverPosition!,
+        icon: gmaps.BitmapDescriptor.defaultMarkerWithHue(
+          gmaps.BitmapDescriptor.hueBlue,
+        ),
+      ));
+    }
 
-void _requestTrip() {
-_safeEmit("customerRequestTripByType", {
-"customerId": widget.customerId,
-"pickup": _pickupController.text,
-"dropoff": _dropController.text,
-});
-debugPrint("🚕 Trip request emitted safely");
-}
-  @override
-  void dispose() {
-        _rerequestTimer?.cancel(); 
-SocketService().off('trip:accepted');
-    SocketService().off('driver:locationUpdate');
-    _pickupController.dispose();
-    _dropController.dispose();
-    _speech.stop();
-    _debounce?.cancel();
-    _mapController?.dispose();
-    _pickupController.dispose();
-_dropController.dispose();
-    super.dispose();
-    _locationTimer?.cancel();
+    if (_screenIndex == 0 && _bikeLiveIcon != null) {
+      for (int i = 0; i < _onlineDrivers.length; i++) {
+        _markers.add(gmaps.Marker(
+          markerId: gmaps.MarkerId('online_driver_$i'),
+          position: _onlineDrivers[i],
+          icon: _bikeLiveIcon!,
+          anchor: const Offset(0.5, 0.5),
+        ));
+      }
+    }
 
+    setState(() {});
   }
 
   Future<void> _initializeData() async {
     await _loadHistory();
 
-    // Set initial pickup
     if (widget.initialPickup != null) {
       _pickupPoint = gmaps.LatLng(
         widget.initialPickup!['lat'],
@@ -258,15 +438,15 @@ _dropController.dispose();
       _pickupAddress = widget.initialPickup!['address'] ?? 'Pickup location';
       _pickupController.text = _pickupAddress;
 
-      // Get state/city from reverse geocoding
       final locationData = await _reverseGeocode(_pickupPoint!);
       _pickupState = locationData['state'] ?? '';
       _pickupCity = locationData['city'] ?? '';
+      await _fetchNearbyDrivers();
+      _updateMarkers();
     } else {
       await _getCurrentLocation();
     }
 
-    // Set initial drop and screen
     if (widget.initialDrop != null) {
       _dropPoint = gmaps.LatLng(
         widget.initialDrop!['lat'],
@@ -281,7 +461,6 @@ _dropController.dispose();
       }
     }
 
-    // Direct to screen 2 if coming from search with drop
     if (widget.entryMode == 'search' && widget.initialDrop != null) {
       setState(() => _screenIndex = 1);
     }
@@ -321,10 +500,14 @@ _dropController.dispose();
         _pickupCity = locationData['city'] ?? '';
         _pickupController.text = _pickupAddress;
       });
+      await _fetchNearbyDrivers();
+      _updateMarkers();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error getting location: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error getting location: $e')),
+        );
+      }
     }
   }
 
@@ -347,7 +530,6 @@ _dropController.dispose();
         'city': placemark.locality ?? placemark.subLocality ?? '',
       };
     } catch (e) {
-      // Fallback to Google Geocoding API
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/geocode/json?latlng=${latLng.latitude},${latLng.longitude}&key=$googleMapsApiKey',
       );
@@ -382,7 +564,7 @@ _dropController.dispose();
           }
         }
       } catch (e) {
-        // Ignore and return default
+        // Ignore
       }
 
       return {'displayName': 'Unknown Location', 'state': '', 'city': ''};
@@ -393,16 +575,19 @@ _dropController.dispose();
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Location Services Disabled'),
-        content: Text('Please enable location services to use this feature.'),
+        backgroundColor: AppColors.surface,
+        title: Text('Location Services Disabled', style: AppTextStyles.heading3),
+        content: Text('Please enable location services to use this feature.',
+            style: AppTextStyles.body2),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('Cancel'),
+            child: Text('Cancel', style: TextStyle(color: AppColors.accent)),
           ),
           TextButton(
             onPressed: () => Geolocator.openLocationSettings(),
-            child: Text('Open Settings'),
+            child:
+                Text('Open Settings', style: TextStyle(color: AppColors.primary)),
           ),
         ],
       ),
@@ -413,17 +598,21 @@ _dropController.dispose();
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Location Permission Required'),
-        content:
-            Text('This app needs location permission to find nearby rides.'),
+        backgroundColor: AppColors.surface,
+        title:
+            Text('Location Permission Required', style: AppTextStyles.heading3),
+        content: Text(
+            'This app needs location permission to find nearby rides.',
+            style: AppTextStyles.body2),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('Cancel'),
+            child: Text('Cancel', style: TextStyle(color: AppColors.accent)),
           ),
           TextButton(
             onPressed: () => Geolocator.openAppSettings(),
-            child: Text('Open Settings'),
+            child:
+                Text('Open Settings', style: TextStyle(color: AppColors.primary)),
           ),
         ],
       ),
@@ -441,7 +630,6 @@ _dropController.dispose();
   }
 
   Future<void> _saveToHistory(String address) async {
-    // Don't save invalid terms
     final lowerAddress = address.toLowerCase();
     if (invalidHistoryTerms.any((term) => lowerAddress.contains(term))) {
       return;
@@ -451,16 +639,68 @@ _dropController.dispose();
     final user = FirebaseAuth.instance.currentUser;
     final historyKey = 'location_history_${user?.phoneNumber ?? user?.uid}';
 
-    // Remove if already exists and add to top
     _history.remove(address);
     _history.insert(0, address);
 
-    // Keep only last 5 items
     if (_history.length > 5) {
       _history = _history.sublist(0, 5);
     }
 
     await prefs.setStringList(historyKey, _history);
+  }
+
+  Future<void> _onPickupChanged(String value) async {
+    if (value.trim().isEmpty) {
+      setState(() {
+        _pickupPoint = null;
+        _pickupAddress = '';
+      });
+      return;
+    }
+
+    if (value.trim().length < 2) {
+      setState(() => _pickupPoint = null);
+      return;
+    }
+
+    if (value.trim() == _pickupAddress.trim()) {
+      return;
+    }
+
+    try {
+      final url = Uri.parse(
+        'https://maps.googleapis.com/maps/api/geocode/json?address=${Uri.encodeComponent(value)}&key=$googleMapsApiKey',
+      );
+      final response = await http.get(url);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final results = data['results'] as List?;
+        if (results != null && results.isNotEmpty) {
+          final location = results[0]['geometry']['location'];
+          final lat = location['lat'] as double;
+          final lng = location['lng'] as double;
+          final formatted = results[0]['formatted_address'] as String? ?? value;
+          setState(() {
+            _pickupPoint = gmaps.LatLng(lat, lng);
+            _pickupAddress = formatted;
+            if (_pickupController.text.trim() != formatted.trim()) {
+              if (value.trim() == _pickupAddress.trim()) {
+                _pickupController.text = formatted;
+              }
+            }
+          });
+          final locationData = await _reverseGeocode(_pickupPoint!);
+          setState(() {
+            _pickupState = locationData['state'] ?? '';
+            _pickupCity = locationData['city'] ?? '';
+          });
+          await _fetchNearbyDrivers();
+          _updateMarkers();
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to geocode pickup: $e');
+    }
   }
 
   Future<void> _fetchSuggestions(String query) async {
@@ -473,11 +713,10 @@ _dropController.dispose();
 
     _debounce = Timer(const Duration(milliseconds: 300), () async {
       try {
-        // Use Google Places API for autocomplete
         final url = Uri.parse(
           'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=$query'
           '&key=$googleMapsApiKey'
-          '&location=${_pickupPoint?.latitude},${_pickupPoint?.longitude}'
+          '&location=${_pickupPoint?.latitude ?? 17.3850},${_pickupPoint?.longitude ?? 78.4867}'
           '&radius=20000',
         );
 
@@ -487,19 +726,72 @@ _dropController.dispose();
           final predictions = data['predictions'] as List?;
 
           if (predictions != null) {
+            List<Map<String, dynamic>> hyderabad = [];
+            List<Map<String, dynamic>> telangana = [];
+            List<Map<String, dynamic>> india = [];
+
+            for (var prediction in predictions) {
+              final placeId = prediction['place_id'] as String;
+              final description = prediction['description'] as String;
+              String city = '';
+              String state = '';
+              String country = '';
+
+              try {
+                final detailsUrl = Uri.parse(
+                  'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$googleMapsApiKey',
+                );
+                final detailsResp = await http.get(detailsUrl);
+                if (detailsResp.statusCode == 200) {
+                  final details = jsonDecode(detailsResp.body);
+                  final result = details['result'];
+                  if (result != null && result['address_components'] != null) {
+                    for (var comp in result['address_components']) {
+                      final types = List<String>.from(comp['types']);
+                      if (types.contains('locality')) {
+                        city = comp['long_name'];
+                      }
+                      if (types.contains('administrative_area_level_1')) {
+                        state = comp['long_name'];
+                      }
+                      if (types.contains('country')) {
+                        country = comp['long_name'];
+                      }
+                    }
+                  }
+                }
+              } catch (_) {}
+
+              final suggestion = {
+                'description': description,
+                'place_id': placeId,
+                'city': city,
+                'state': state,
+                'country': country,
+              };
+
+              if (city.toLowerCase() == 'hyderabad') {
+                hyderabad.add(suggestion);
+              } else if (state.toLowerCase() == 'telangana') {
+                telangana.add(suggestion);
+              } else if (country.toLowerCase() == 'india') {
+                india.add(suggestion);
+              } else {
+                india.add(suggestion);
+              }
+            }
+
+            final grouped = [
+              ...hyderabad,
+              ...telangana,
+              ...india,
+            ];
             setState(() {
-              _suggestions =
-                  predictions.map<Map<String, dynamic>>((prediction) {
-                return {
-                  'description': prediction['description'] as String,
-                  'place_id': prediction['place_id'] as String,
-                };
-              }).toList();
+              _suggestions = grouped;
             });
           }
         }
       } catch (e) {
-        // Fallback to local history matches
         setState(() {
           _suggestions = _history
               .where((item) => item.toLowerCase().contains(query.toLowerCase()))
@@ -515,49 +807,62 @@ _dropController.dispose();
     final description = suggestion['description'] as String;
 
     if (placeId.isEmpty) {
-      // History item selected
-      _dropController.text = description;
-      await _searchLocation(description);
+      if (_activeField == 'pickup') {
+        _pickupController.text = description;
+        await _onPickupChanged(description);
+      } else {
+        _dropController.text = description;
+        await _searchLocation(description);
+      }
       return;
     }
 
     try {
-      // Get place details from Google Places API
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$googleMapsApiKey',
       );
-
       final response = await http.get(url);
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final result = data['result'];
-
         if (result != null) {
           final geometry = result['geometry'];
           final location = geometry['location'];
-
           final lat = location['lat'] as double;
           final lng = location['lng'] as double;
-
-          _dropPoint = gmaps.LatLng(lat, lng);
-          _dropAddress = result['formatted_address'] ?? description;
-          _dropController.text = _dropAddress;
-
-          await _saveToHistory(_dropAddress);
-          setState(() => _screenIndex = 1);
-          await _drawRoute();
+          final formatted = result['formatted_address'] ?? description;
+          if (_activeField == 'pickup') {
+            _pickupPoint = gmaps.LatLng(lat, lng);
+            _pickupAddress = formatted;
+            _pickupController.text = formatted;
+            final locationData = await _reverseGeocode(_pickupPoint!);
+            setState(() {
+              _pickupState = locationData['state'] ?? '';
+              _pickupCity = locationData['city'] ?? '';
+            });
+            await _fetchNearbyDrivers();
+            _updateMarkers();
+          } else {
+            _dropPoint = gmaps.LatLng(lat, lng);
+            _dropAddress = formatted;
+            _dropController.text = formatted;
+            await _saveToHistory(_dropAddress);
+            setState(() => _screenIndex = 1);
+            await _drawRoute();
+          }
         }
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to get location details: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to get location details: $e')),
+        );
+      }
     }
   }
 
   Future<void> _searchLocation(String query) async {
     try {
-      // Use Google Geocoding API to search for location
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/geocode/json?address=$query&key=$googleMapsApiKey',
       );
@@ -582,9 +887,11 @@ _dropController.dispose();
         }
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to search location: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to search location: $e')),
+        );
+      }
     }
   }
 
@@ -603,16 +910,21 @@ _dropController.dispose();
       },
       onError: (error) {
         setState(() => _isListening = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Speech input unavailable, please type')),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Speech input unavailable, please type')),
+          );
+        }
       },
     );
 
     if (!available) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Speech recognition not available')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Speech recognition not available')),
+        );
+      }
       return;
     }
 
@@ -663,9 +975,11 @@ _dropController.dispose();
         _fitMapToBounds();
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to calculate route: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to calculate route: $e')),
+        );
+      }
     }
   }
 
@@ -703,8 +1017,9 @@ _dropController.dispose();
   }
 
   void _fitMapToBounds() {
-    if (_pickupPoint == null || _dropPoint == null || _mapController == null)
+    if (_pickupPoint == null || _dropPoint == null || _mapController == null) {
       return;
+    }
 
     final bounds = gmaps.LatLngBounds(
       southwest: gmaps.LatLng(
@@ -737,7 +1052,6 @@ _dropController.dispose();
     _fares.clear();
   });
 
-  // ✅ Choose vehicles to fetch
   final vehiclesToFetch = (widget.vehicleType != null &&
           widget.vehicleType!.isNotEmpty)
       ? [widget.vehicleType!]
@@ -747,7 +1061,7 @@ _dropController.dispose();
     final results = await Future.wait(
       vehiclesToFetch.map((vehicleType) async {
         try {
-          debugPrint('📡 Fetching fare for vehicleType="$vehicleType"...');
+          debugPrint('Fetching fare for vehicleType="$vehicleType"...');
 
           final response = await http.post(
             Uri.parse('$apiBase/api/fares/calc'),
@@ -765,103 +1079,128 @@ _dropController.dispose();
           if (response.statusCode == 200) {
             final data = jsonDecode(response.body);
             final total = (data['total'] as num).toDouble();
-            debugPrint('✅ Fare for $vehicleType = $total');
+            debugPrint('✅ API fare for $vehicleType = ₹$total');
             return MapEntry(vehicleType, total);
           } else if (response.statusCode == 404) {
-            debugPrint('⚠️ Rate not found for $vehicleType');
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Rate not found for $vehicleType')),
-            );
-            return null;
+            debugPrint('⚠️ Rate not found for $vehicleType, using default');
+            return MapEntry(vehicleType, _defaultFares[vehicleType] ?? 0.0);
           } else {
-            debugPrint(
-                '❌ Failed response ${response.statusCode} for $vehicleType');
+            debugPrint('❌ Failed response ${response.statusCode} for $vehicleType');
+            return MapEntry(vehicleType, _defaultFares[vehicleType] ?? 0.0);
           }
         } catch (e) {
           debugPrint('❌ Error fetching fare for $vehicleType: $e');
+          return MapEntry(vehicleType, _defaultFares[vehicleType] ?? 0.0);
         }
-        return null;
       }),
     );
 
-    // ✅ Apply results once
     setState(() {
       for (var entry in results) {
-        if (entry != null) {
+        if (entry.value > 0) {
           _fares[entry.key] = entry.value;
         }
       }
     });
+
+    debugPrint('💰 Final fares loaded: $_fares');
   } catch (e) {
-    debugPrint('🔥 Unexpected error in _fetchFares: $e');
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Failed to fetch fares: $e')),
-    );
+    debugPrint('❌ Unexpected error in _fetchFares: $e');
   } finally {
     setState(() => _loadingFares = false);
   }
 }
 
-
+// Replace _confirmRide() with this:
 Future<void> _confirmRide() async {
-  // 1. Validate that all necessary data (user, vehicle, locations) is available before proceeding.
   final user = FirebaseAuth.instance.currentUser;
-  if (user == null || _selectedVehicle == null || _pickupPoint == null || _dropPoint == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Please ensure all details are correct.')),
-    );
+  if (user == null ||
+      _selectedVehicle == null ||
+      _pickupPoint == null ||
+      _dropPoint == null) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Please ensure all details are correct.')),
+      );
+    }
     return;
   }
 
-  // 2. Build the data payload for the backend, ensuring coordinates are in [longitude, latitude] order.
-  // ...existing code...
-final rideData = {
-  "customerId": widget.customerId, // <-- Use DB ID, not phone!
-  "pickup": {
-    "coordinates": [_pickupPoint!.longitude, _pickupPoint!.latitude],
-    "address": _pickupAddress,
-  },
-  "drop": {
-    "coordinates": [_dropPoint!.longitude, _dropPoint!.latitude],
-    "address": _dropAddress,
-  },
-  "vehicleType": _selectedVehicle!.toLowerCase().trim(),
-  "fare": _fares[_selectedVehicle],
-  "timestamp": DateTime.now().toIso8601String(),
-};
-// ...existing code...
-  debugPrint("🚨 Sending rideData: ${jsonEncode(rideData)}");
+  final selected = _selectedVehicle!.toLowerCase().trim();
+  final selectedFare = _fares[selected] ?? _defaultFares[selected] ?? 0.0;
+
+  if (selectedFare <= 0) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Unable to calculate fare. Please try again.'),
+          backgroundColor: Colors.red,
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () async {
+              setState(() => _loadingFares = true);
+              await _fetchFares();
+            },
+          ),
+        ),
+      );
+    }
+    return;
+  }
+
+  debugPrint("===========================================");
+  debugPrint("💰 FARE DETAILS:");
+  debugPrint("   Vehicle: $selected");
+  debugPrint("   API fare: ${_fares[selected]}");
+  debugPrint("   Default fare: ${_defaultFares[selected]}");
+  debugPrint("   Final fare: ₹$selectedFare");
+  debugPrint("   Source: ${_fares[selected] != null ? 'API (distance-based)' : 'DEFAULT (fallback)'}");
+  debugPrint("===========================================");
+
+  final rideData = {
+    "customerId": widget.customerId,
+    "pickup": {
+      "coordinates": [_pickupPoint!.longitude, _pickupPoint!.latitude],
+      "address": _pickupAddress,
+    },
+    "drop": {
+      "coordinates": [_dropPoint!.longitude, _dropPoint!.latitude],
+      "address": _dropAddress,
+    },
+    "vehicleType": selected,
+    "fare": selectedFare,
+    "timestamp": DateTime.now().toIso8601String(),
+  };
+
+  debugPrint("📤 Sending ride request: ${jsonEncode(rideData)}");
 
   try {
-    // 3. Send the ride request to the server via an HTTP POST request.
     final response = await http.post(
       Uri.parse("$apiBase/api/trip/short"),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode(rideData),
     );
 
-    // 4. Handle the successful response from the server.
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      debugPrint("✅ Trip created on server: $data");
+      debugPrint("✅ Trip created: $data");
 
-      // 5. If a trip was created, start the 'waiting' UI and the 5-second re-request timer.
       if (data['tripId'] != null) {
         setState(() {
           _currentTripId = data['tripId'];
-          // Show the waiting UI only if the backend found drivers to notify.
           _isWaitingForDriver = data['drivers'] > 0;
         });
 
         if (_isWaitingForDriver) {
-          _rerequestTimer?.cancel(); // Cancel any old timer before starting a new one.
+          _rerequestTimer?.cancel();
           _rerequestTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
             if (!mounted) {
               timer.cancel();
               return;
             }
-            print("🔁 Re-requesting trip: $_currentTripId");
-            // This event tells the backend to broadcast the request again to nearby drivers.
+            debugPrint("Re-requesting trip: $_currentTripId");
             SocketService().emit('trip:rerequest', {'tripId': _currentTripId});
           });
         }
@@ -869,321 +1208,951 @@ final rideData = {
 
       await _saveToHistory(_dropAddress);
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(_isWaitingForDriver ? 'Searching for nearby drivers...' : 'No drivers available right now.'),
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_isWaitingForDriver
+                ? 'Searching for nearby drivers...'
+                : 'No drivers available right now.'),
+          ),
+        );
+      }
     } else {
-      // Handle API errors (e.g., 400, 500).
       debugPrint("❌ Trip API failed: ${response.statusCode} ${response.body}");
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Ride request failed: ${response.body}')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ride request failed: ${response.body}')),
+        );
+      }
     }
   } catch (e) {
-    // Handle network errors (e.g., no internet connection).
-    debugPrint("⚠️ Error calling trip API: $e");
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Failed to send ride request: $e')),
-    );
+    debugPrint("❌ Error calling trip API: $e");
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to send ride request: $e')),
+      );
+    }
   }
 }
-
-@override
-Widget build(BuildContext context) {
-  return Scaffold(
-    body: Stack(
-      children: [
-        // This is your main content (the search screen or the map screen)
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 350),
-          child: _screenIndex == 0 ? _buildSearchScreen() : _buildMapScreen(),
-        ),
-
-        // This is the overlay that shows ONLY when you are waiting for a driver
-        if (_isWaitingForDriver)
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: Stack(
+        children: [
           Container(
-            color: Colors.black.withOpacity(0.7),
-            child: Center(
-              child: Card(
-                elevation: 8,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 30),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const CircularProgressIndicator(),
-                      const SizedBox(height: 20),
-                      Text(
-                        'Waiting for a driver to accept...',
-                        style: GoogleFonts.poppins(fontSize: 16),
-                      ),
-                      const SizedBox(height: 10),
-                      // Ensure _currentTripId is not null before displaying
-                      if (_currentTripId != null)
-                        Text(
-                          'Trip ID: $_currentTripId',
-                          style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey),
-                        ),
-                    ],
-                  ),
-                ),
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color(0xFF0A0A0F),
+                  Color(0xFF1A1A24),
+                  Color(0xFF0A0A0F),
+                ],
+                stops: [0.0, 0.5, 1.0],
               ),
             ),
           ),
-      ],
-    ),
-  );
-}
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 500),
+            transitionBuilder: (Widget child, Animation<double> animation) {
+              return SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(1.0, 0.0),
+                  end: Offset.zero,
+                ).animate(CurvedAnimation(
+                  parent: animation,
+                  curve: Curves.easeOutCubic,
+                )),
+                child: FadeTransition(opacity: animation, child: child),
+              );
+            },
+            child: _screenIndex == 0
+                ? _buildEnhancedSearchScreen()
+                : _buildEnhancedMapScreen(),
+          ),
+          if (_isWaitingForDriver) _buildEnhancedWaitingOverlay(),
+        ],
+      ),
+    );
+  }
 
-  Widget _buildSearchScreen() {
+  Widget _buildEnhancedSearchScreen() {
     return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "Book a Ride",
-              style: GoogleFonts.poppins(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+      child: FadeTransition(
+        opacity: _fadeAnimation,
+        child: SlideTransition(
+          position: _slideAnimation,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildEnhancedHeader(),
+                const SizedBox(height: 20),
+                _EnhancedLocationInputBar(
+                  pickupController: _pickupController,
+                  dropController: _dropController,
+                  pickupFocusNode: _pickupFocusNode,
+                  dropFocusNode: _dropFocusNode,
+                  onPickupChanged: (value) {
+                    _onPickupChanged(value);
+                    _fetchSuggestions(value);
+                  },
+                  onDropChanged: (value) => _fetchSuggestions(value),
+                  onMicPressed: _toggleListening,
+                  isListening: _isListening,
+                  pulseAnimation: _pulseAnimation,
+                ),
+                const SizedBox(height: 20),
+                Expanded(
+                  child: _buildEnhancedSuggestionsArea(),
+                ),
+              ],
             ),
-            SizedBox(height: 4),
-            Text(
-              "Where would you like to go?",
-              style: GoogleFonts.poppins(
-                color: Colors.grey,
-                fontSize: 14,
-              ),
-            ),
-            SizedBox(height: 16),
-            _LocationInputBar(
-              pickupController: _pickupController,
-              dropController: _dropController,
-              onPickupChanged: (value) => _fetchSuggestions(value),
-              onDropChanged: (value) => _fetchSuggestions(value),
-              onMicPressed: _toggleListening,
-              isListening: _isListening,
-              editable: true,
-            ),
-            SizedBox(height: 8),
-            Expanded(
-              child: ListView(
-                children: [
-                  if (_suggestions.isNotEmpty)
-                    _SuggestionList(
-                      suggestions: _suggestions,
-                      onSuggestionSelected: _selectSuggestion,
-                    ),
-                  if (_history.isNotEmpty)
-                    _HistoryList(
-                      history: _history,
-                      onHistorySelected: _selectSuggestion,
-                    ),
-                ],
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildMapScreen() {
-    return Stack(
+  Widget _buildEnhancedHeader() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        gmaps.GoogleMap(
-  onMapCreated: (controller) {
-    _mapController = controller;
-    _updateMarkers(); // initialize markers
-  },
-  initialCameraPosition: gmaps.CameraPosition(
-    target: _pickupPoint ?? const gmaps.LatLng(0, 0),
-    zoom: 15,
-  ),
-  markers: _markers, // ✅ use dynamic markers
-  polylines: _routePoints.isNotEmpty
-      ? {
-          gmaps.Polyline(
-            polylineId: const gmaps.PolylineId('route'),
-            points: _routePoints,
-            color: Colors.blue,
-            width: 4,
-          ),
-        }
-      : {},
-  myLocationEnabled: true,
-),
-
-        Positioned(
-          top: 16,
-          left: 16,
-          right: 16,
-          child: _LocationInputBar(
-            pickupController: _pickupController,
-            dropController: _dropController,
-            onPickupChanged: (value) {},
-            onDropChanged: (value) {},
-            onMicPressed: () {},
-            isListening: false,
-            editable: false,
+        Text(
+          "Good ${_getTimeGreeting()}!",
+          style: AppTextStyles.body2.copyWith(
+            color: AppColors.onSurfaceTertiary,
           ),
         ),
-        Positioned(
-          bottom: 0,
-          left: 0,
-          right: 0,
-          child: _FarePanel(
-            fares: _fares,
-            loading: _loadingFares,
-            selectedVehicle: _selectedVehicle,
-            durationSec: _durationSec,
-            onVehicleSelected: (vehicle) =>
-                setState(() => _selectedVehicle = vehicle),
-            onConfirmRide: _confirmRide,
-            showAll: widget.vehicleType == null,
+        const SizedBox(height: 4),
+        Text(
+          "Where are you going?",
+          style: AppTextStyles.heading1.copyWith(fontSize: 28),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          height: 3,
+          width: 50,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [AppColors.primary, AppColors.accent],
+            ),
+            borderRadius: BorderRadius.circular(2),
           ),
         ),
       ],
     );
   }
+
+  String _getTimeGreeting() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'morning';
+    if (hour < 17) return 'afternoon';
+    return 'evening';
+  }
+
+  Widget _buildEnhancedSuggestionsArea() {
+    final bool isSearching = _suggestions.isNotEmpty;
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 300),
+      child: isSearching
+          ? _buildEnhancedSuggestionsList()
+          : _buildEnhancedHistorySection(),
+    );
+  }
+
+  Widget _buildEnhancedHistorySection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              "Recent Destinations",
+              style: AppTextStyles.heading3.copyWith(fontSize: 17),
+            ),
+            if (_history.isNotEmpty)
+              GestureDetector(
+                onTap: () {
+                  HapticFeedback.lightImpact();
+                  setState(() => _history.clear());
+                },
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                        color: AppColors.accent.withOpacity(0.3)),
+                  ),
+                  child: Text(
+                    "Clear all",
+                    style: AppTextStyles.caption.copyWith(
+                      color: AppColors.accent,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: _history.isEmpty
+              ? _buildEmptyHistoryState()
+              : _EnhancedHistoryList(
+                  history: _history,
+                  onHistorySelected: _selectSuggestion,
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyHistoryState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(32),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primary.withOpacity(0.2),
+                  blurRadius: 20,
+                  spreadRadius: 5,
+                ),
+              ],
+            ),
+            child: const Icon(
+              Icons.explore_outlined,
+              size: 48,
+              color: AppColors.primary,
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            "Start exploring",
+            style: AppTextStyles.heading3.copyWith(
+              color: AppColors.onSurfaceSecondary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Your recent destinations will appear here",
+            style: AppTextStyles.body2,
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEnhancedSuggestionsList() {
+    return ListView.builder(
+      itemCount: _suggestions.length,
+      padding: const EdgeInsets.only(top: 8),
+      itemBuilder: (context, index) {
+        final suggestion = _suggestions[index];
+        return _EnhancedSuggestionCard(
+          suggestion: suggestion,
+          index: index,
+          onTap: () => _selectSuggestion(suggestion),
+        );
+      },
+    );
+  }
+
+  Widget _buildEnhancedMapScreen() {
+    final screenHeight = MediaQuery.of(context).size.height;
+    final mapHeight = screenHeight * 0.5;
+
+    return Stack(
+      children: [
+        Container(
+          height: mapHeight,
+          decoration: BoxDecoration(
+            borderRadius: const BorderRadius.only(
+              bottomLeft: Radius.circular(32),
+              bottomRight: Radius.circular(32),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.3),
+                blurRadius: 20,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: const BorderRadius.only(
+              bottomLeft: Radius.circular(32),
+              bottomRight: Radius.circular(32),
+            ),
+            child: gmaps.GoogleMap(
+              onMapCreated: (controller) {
+                _mapController = controller;
+                _updateMarkers();
+              },
+              initialCameraPosition: gmaps.CameraPosition(
+                target: _pickupPoint ?? const gmaps.LatLng(0, 0),
+                zoom: 15,
+              ),
+              markers: Set<gmaps.Marker>.from(_markers),
+              polylines: _routePoints.isNotEmpty
+                  ? {
+                      gmaps.Polyline(
+                        polylineId: const gmaps.PolylineId('route'),
+                        points: _routePoints,
+                        color: AppColors.primary,
+                        width: 6,
+                        patterns: [
+                          gmaps.PatternItem.dash(20),
+                          gmaps.PatternItem.gap(10)
+                        ],
+                      ),
+                    }
+                  : {},
+              myLocationEnabled: true,
+              zoomControlsEnabled: false,
+              mapToolbarEnabled: false,
+            ),
+          ),
+        ),
+        DraggableScrollableSheet(
+          initialChildSize: 0.5,
+          minChildSize: 0.5,
+          maxChildSize: 0.95,
+          builder: (context, scrollController) {
+            return Container(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0xFF1A1A24),
+                    Color(0xFF0A0A0F),
+                  ],
+                ),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(32),
+                  topRight: Radius.circular(32),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.5),
+                    blurRadius: 30,
+                    offset: const Offset(0, -10),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    height: 4,
+                    width: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.onSurfaceTertiary,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.only(bottom: 100),
+                      child: _EnhancedFarePanel(
+                        fares: _fares,
+                        loading: _loadingFares,
+                        selectedVehicle: _selectedVehicle,
+                        durationSec: _durationSec,
+                        onVehicleSelected: (vehicle) {
+                          HapticFeedback.selectionClick();
+                          setState(() => _selectedVehicle = vehicle);
+                        },
+                        onConfirmRide: _confirmRide,
+                        showAll: widget.vehicleType == null,
+                        onBack: () {
+                          HapticFeedback.lightImpact();
+                          setState(() => _screenIndex = 0);
+                        },
+                        shimmerAnimation: _shimmerAnimation,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+        Positioned(
+          left: 24,
+          right: 24,
+          bottom: 32,
+          child: _EnhancedBookButton(
+            selectedVehicle: _selectedVehicle,
+            onPressed: _selectedVehicle != null ? _confirmRide : null,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEnhancedWaitingOverlay() {
+    return Positioned.fill(
+      child: Stack(
+        children: [
+          AnimatedBuilder(
+            animation: _pulseAnimation,
+            builder: (context, child) {
+              return BackdropFilter(
+                filter: ImageFilter.blur(
+                  sigmaX: 20 * _pulseAnimation.value,
+                  sigmaY: 20 * _pulseAnimation.value,
+                ),
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        AppColors.background.withOpacity(0.7),
+                        AppColors.surface.withOpacity(0.8),
+                        AppColors.background.withOpacity(0.9),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                AnimatedBuilder(
+                  animation: _pulseAnimation,
+                  builder: (context, child) {
+                    return Container(
+                      width: 200,
+                      height: 200,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: RadialGradient(
+                          colors: [
+                            AppColors.primary.withOpacity(0.8),
+                            AppColors.accent.withOpacity(0.6),
+                            Colors.transparent,
+                          ],
+                          stops: const [0.0, 0.7, 1.0],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary
+                                .withOpacity(0.5 * _pulseAnimation.value),
+                            blurRadius: 60 * _pulseAnimation.value,
+                            spreadRadius: 20 * _pulseAnimation.value,
+                          ),
+                        ],
+                      ),
+                      child: Center(
+                        child: Container(
+                          width: 100,
+                          height: 100,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppColors.surface,
+                            border: Border.all(
+                              color: AppColors.primary,
+                              width: 3,
+                            ),
+                          ),
+                          child: const Icon(
+                            Icons.search,
+                            size: 50,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(height: 40),
+                Text(
+                  'Searching for drivers nearby...',
+                  style: AppTextStyles.heading2.copyWith(
+                    color: AppColors.onSurface,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'This usually takes less than 30 seconds',
+                  style: AppTextStyles.body2,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 60),
+                _EnhancedCancelButton(
+                  onPressed: () {
+                    HapticFeedback.mediumImpact();
+                    setState(() => _isWaitingForDriver = false);
+                    _rerequestTimer?.cancel();
+                  },
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _fadeController.dispose();
+    _slideController.dispose();
+    _pulseController.dispose();
+    _shimmerController.dispose();
+    _pickupFocusNode.dispose();
+    _dropFocusNode.dispose();
+    _rerequestTimer?.cancel();
+    _locationTimer?.cancel();
+    _debounce?.cancel();
+    _pickupController.dispose();
+    _dropController.dispose();
+    _mapController?.dispose();
+    _speech.stop();
+    SocketService().off('trip:accepted');
+    SocketService().off('driver:locationUpdate');
+    super.dispose();
+  }
 }
 
-class _LocationInputBar extends StatelessWidget {
+// Enhanced UI Components
+
+class _EnhancedLocationInputBar extends StatelessWidget {
   final TextEditingController pickupController;
   final TextEditingController dropController;
+  final FocusNode pickupFocusNode;
+  final FocusNode dropFocusNode;
   final ValueChanged<String> onPickupChanged;
   final ValueChanged<String> onDropChanged;
   final VoidCallback onMicPressed;
   final bool isListening;
-  final bool editable;
+  final Animation<double> pulseAnimation;
 
-  const _LocationInputBar({
+  const _EnhancedLocationInputBar({
     required this.pickupController,
     required this.dropController,
+    required this.pickupFocusNode,
+    required this.dropFocusNode,
     required this.onPickupChanged,
     required this.onDropChanged,
     required this.onMicPressed,
     required this.isListening,
-    required this.editable,
+    required this.pulseAnimation,
   });
 
   @override
   Widget build(BuildContext context) {
-    
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF2A2A38),
+            Color(0xFF1A1A24),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: AppColors.primary.withOpacity(0.2),
+          width: 1,
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black12,
-            blurRadius: 6,
-            offset: Offset(0, 2),
+            color: AppColors.primary.withOpacity(0.1),
+            blurRadius: 20,
+            spreadRadius: 2,
           ),
         ],
       ),
+      padding: const EdgeInsets.all(16),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          TextField(
+          _buildInputSection(
+            label: "FROM",
+            icon: Icons.my_location,
+            iconColor: AppColors.success,
             controller: pickupController,
-            enabled: editable,
-            decoration: InputDecoration(
-              prefixIcon: Icon(Icons.radio_button_checked, color: Colors.black),
-              hintText: 'Pickup location',
-              border: InputBorder.none,
-              contentPadding:
-                  EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            ),
+            focusNode: pickupFocusNode,
             onChanged: onPickupChanged,
+            hintText: "Current location",
           ),
-          Divider(height: 1),
-          TextField(
-            controller: dropController,
-            enabled: editable,
-            decoration: InputDecoration(
-              prefixIcon: Icon(Icons.location_on_outlined, color: Colors.black),
-              suffixIcon: IconButton(
-                icon: Icon(isListening ? Icons.mic : Icons.mic_none,
-                    color: Colors.black),
-                onPressed: onMicPressed,
-              ),
-              hintText: 'Drop location',
-              border: InputBorder.none,
-              contentPadding:
-                  EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          Container(
+            margin: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Divider(color: AppColors.divider, thickness: 1),
+                ),
+                Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 8),
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    shape: BoxShape.circle,
+                    border:
+                        Border.all(color: AppColors.primary.withOpacity(0.3)),
+                  ),
+                  child: const Icon(
+                    Icons.swap_vert,
+                    size: 14,
+                    color: AppColors.primary,
+                  ),
+                ),
+                const Expanded(
+                  child: Divider(color: AppColors.divider, thickness: 1),
+                ),
+              ],
             ),
+          ),
+          _buildInputSection(
+            label: "TO",
+            icon: Icons.location_on,
+            iconColor: AppColors.error,
+            controller: dropController,
+            focusNode: dropFocusNode,
             onChanged: onDropChanged,
+            hintText: "Where to?",
+            suffixWidget: _buildMicButton(),
           ),
         ],
       ),
     );
   }
+
+  Widget _buildInputSection({
+    required String label,
+    required IconData icon,
+    required Color iconColor,
+    required TextEditingController controller,
+    required FocusNode focusNode,
+    required ValueChanged<String> onChanged,
+    required String hintText,
+    Widget? suffixWidget,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: AppTextStyles.caption.copyWith(
+            letterSpacing: 1.0,
+            fontWeight: FontWeight.w700,
+            fontSize: 11,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: iconColor.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: iconColor.withOpacity(0.3),
+                  width: 1,
+                ),
+              ),
+              child: Icon(
+                icon,
+                color: iconColor,
+                size: 18,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: controller,
+                focusNode: focusNode,
+                style: AppTextStyles.body1.copyWith(fontSize: 15),
+                decoration: InputDecoration(
+                  hintText: hintText,
+                  hintStyle: AppTextStyles.body1.copyWith(
+                    color: AppColors.onSurfaceTertiary,
+                    fontSize: 15,
+                  ),
+                  border: InputBorder.none,
+                  suffixIcon: suffixWidget,
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                onChanged: onChanged,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMicButton() {
+    return AnimatedBuilder(
+      animation: pulseAnimation,
+      builder: (context, child) {
+        return GestureDetector(
+          onTap: onMicPressed,
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: isListening
+                  ? AppColors.accent.withOpacity(0.2)
+                  : AppColors.surface,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: isListening
+                    ? AppColors.accent
+                    : AppColors.primary.withOpacity(0.3),
+                width: isListening ? 2 : 1,
+              ),
+              boxShadow: isListening
+                  ? [
+                      BoxShadow(
+                        color: AppColors.accent
+                            .withOpacity(0.5 * pulseAnimation.value),
+                        blurRadius: 20 * pulseAnimation.value,
+                        spreadRadius: 5 * pulseAnimation.value,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Icon(
+              isListening ? Icons.mic : Icons.mic_none,
+              color: isListening ? AppColors.accent : AppColors.primary,
+              size: 18,
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
 
-class _HistoryList extends StatelessWidget {
+class _EnhancedHistoryList extends StatelessWidget {
   final List<String> history;
   final ValueChanged<Map<String, dynamic>> onHistorySelected;
 
-  const _HistoryList({
+  const _EnhancedHistoryList({
     required this.history,
     required this.onHistorySelected,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8.0),
-          child: Text(
-            'Recent Rides',
-            style: GoogleFonts.poppins(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        ...history.map((item) => ListTile(
-              leading: Icon(Icons.history, color: Colors.grey),
-              title: Text(item),
-              onTap: () =>
-                  onHistorySelected({'description': item, 'place_id': ''}),
-            )),
-      ],
+    return ListView.separated(
+      itemCount: history.length,
+      separatorBuilder: (context, index) => const SizedBox(height: 10),
+      itemBuilder: (context, index) {
+        final item = history[index];
+        return TweenAnimationBuilder<double>(
+          duration: Duration(milliseconds: 200 + (index * 50)),
+          tween: Tween(begin: 0.0, end: 1.0),
+          builder: (context, value, child) {
+            return Transform.translate(
+              offset: Offset(0, 20 * (1 - value)),
+              child: Opacity(
+                opacity: value,
+                child: _EnhancedLocationCard(
+                  title: item,
+                  subtitle: "Recent destination",
+                  icon: Icons.history,
+                  iconColor: AppColors.warning,
+                  onTap: () => onHistorySelected({
+                    'description': item,
+                    'place_id': '',
+                  }),
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
 
-class _SuggestionList extends StatelessWidget {
-  final List<Map<String, dynamic>> suggestions;
-  final ValueChanged<Map<String, dynamic>> onSuggestionSelected;
+class _EnhancedSuggestionCard extends StatelessWidget {
+  final Map<String, dynamic> suggestion;
+  final int index;
+  final VoidCallback onTap;
 
-  const _SuggestionList({
-    required this.suggestions,
-    required this.onSuggestionSelected,
+  const _EnhancedSuggestionCard({
+    required this.suggestion,
+    required this.index,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: suggestions
-          .map((suggestion) => ListTile(
-                leading: Icon(Icons.location_on, color: Colors.blue),
-                title: Text(suggestion['description']),
-                onTap: () => onSuggestionSelected(suggestion),
-              ))
-          .toList(),
+    return TweenAnimationBuilder<double>(
+      duration: Duration(milliseconds: 100 + (index * 50)),
+      tween: Tween(begin: 0.0, end: 1.0),
+      builder: (context, value, child) {
+        return Transform.translate(
+          offset: Offset(20 * (1 - value), 0),
+          child: Opacity(
+            opacity: value,
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              child: _EnhancedLocationCard(
+                title: suggestion['description'],
+                subtitle: _getLocationSubtitle(suggestion),
+                icon: Icons.location_on,
+                iconColor: AppColors.primary,
+                onTap: onTap,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _getLocationSubtitle(Map<String, dynamic> suggestion) {
+    final city = suggestion['city'] ?? '';
+    final state = suggestion['state'] ?? '';
+    if (city.isNotEmpty && state.isNotEmpty) {
+      return '$city, $state';
+    } else if (city.isNotEmpty) {
+      return city;
+    } else if (state.isNotEmpty) {
+      return state;
+    }
+    return 'Location';
+  }
+}
+
+class _EnhancedLocationCard extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color iconColor;
+  final VoidCallback onTap;
+
+  const _EnhancedLocationCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.iconColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF2A2A38),
+                Color(0xFF1A1A24),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: AppColors.primary.withOpacity(0.1),
+              width: 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 8,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: iconColor.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: iconColor.withOpacity(0.3),
+                    width: 1,
+                  ),
+                ),
+                child: Icon(
+                  icon,
+                  color: iconColor,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: AppTextStyles.body1.copyWith(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (subtitle.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: AppTextStyles.body2.copyWith(fontSize: 13),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.arrow_forward_ios,
+                color: AppColors.onSurfaceTertiary,
+                size: 14,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
 
-class _FarePanel extends StatelessWidget {
+class _EnhancedFarePanel extends StatelessWidget {
   final Map<String, double> fares;
   final bool loading;
   final String? selectedVehicle;
@@ -1191,8 +2160,10 @@ class _FarePanel extends StatelessWidget {
   final ValueChanged<String> onVehicleSelected;
   final VoidCallback onConfirmRide;
   final bool showAll;
+  final VoidCallback onBack;
+  final Animation<double> shimmerAnimation;
 
-  const _FarePanel({
+  const _EnhancedFarePanel({
     required this.fares,
     required this.loading,
     required this.selectedVehicle,
@@ -1200,163 +2171,522 @@ class _FarePanel extends StatelessWidget {
     required this.onVehicleSelected,
     required this.onConfirmRide,
     required this.showAll,
+    required this.onBack,
+    required this.shimmerAnimation,
   });
-
-  String _formatDuration(double seconds) {
-    final duration = Duration(seconds: seconds.round());
-    if (duration.inHours > 0) {
-      return '${duration.inHours}h ${duration.inMinutes.remainder(60)}m';
-    }
-    return '${duration.inMinutes}m';
-  }
 
   @override
   Widget build(BuildContext context) {
     if (loading) {
-      return Container(
-        padding: EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(16),
-            topRight: Radius.circular(16),
-          ),
-        ),
-        child: Center(child: CircularProgressIndicator()),
-      );
+      return _buildShimmerLoading();
     }
 
     if (fares.isEmpty) {
-      return SizedBox.shrink();
+      return const SizedBox.shrink();
     }
 
-final vehiclesToShow = showAll
-    ? vehicleLabels
-    : (selectedVehicle != null ? [selectedVehicle!] : [vehicleLabels.first]);
+    final vehiclesToShow = showAll
+        ? vehicleLabels
+        : (selectedVehicle != null ? [selectedVehicle!] : [vehicleLabels.first]);
 
-    return Container(
-      padding: EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(16),
-          topRight: Radius.circular(16),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 8,
-            offset: Offset(0, -2),
-          ),
-        ],
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: vehiclesToShow.map((vehicle) {
-                final fare = fares[vehicle];
-                return _FareCard(
-                  vehicle: vehicle,
-                  fare: fare,
-                  selected: selectedVehicle == vehicle,
-                  onTap: () => onVehicleSelected(vehicle),
-                );
-              }).toList(),
-            ),
-          ),
-          SizedBox(height: 16),
-          if (durationSec != null)
-            Text(
-              'Duration: ${_formatDuration(durationSec!)}',
-              style: GoogleFonts.poppins(
-                fontSize: 14,
-                color: Colors.grey[700],
+          Row(
+            children: [
+              GestureDetector(
+                onTap: onBack,
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: AppColors.primary.withOpacity(0.2),
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.arrow_back,
+                    color: AppColors.onSurface,
+                    size: 20,
+                  ),
+                ),
               ),
-            ),
-          SizedBox(height: 16),
-          //... inside _FarePanel widget
-ElevatedButton(
-  // The button is disabled (onPressed is null) if no vehicle is selected.
-  // Otherwise, it's enabled with the onConfirmRide function.
-  onPressed: selectedVehicle != null ? onConfirmRide : null,
-  style: ElevatedButton.styleFrom(
-    // You can also change the color based on the state for a clearer visual cue
-    backgroundColor: selectedVehicle != null ? Colors.blue[900] : Colors.grey,
-    minimumSize: Size(double.infinity, 50),
-    shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(25),
-    ),
-  ),
-  child: Text(
-    'Confirm Ride',
-    style: GoogleFonts.poppins(
-      fontSize: 16,
-      fontWeight: FontWeight.bold,
-      color: Colors.white,
-    ),
-  ),
-),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Choose your ride",
+                      style: AppTextStyles.heading2,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      "${vehiclesToShow.length} option${vehiclesToShow.length > 1 ? 's' : ''} available",
+                      style: AppTextStyles.body2,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 32),
+          ...vehiclesToShow.map((vehicle) {
+            final fare = fares[vehicle];
+            final isSelected = selectedVehicle == vehicle;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: _EnhancedFareCard(
+                vehicle: vehicle,
+                fare: fare,
+                selected: isSelected,
+                onTap: () => onVehicleSelected(vehicle),
+                durationSec: durationSec,
+              ),
+            );
+          }).toList(),
         ],
       ),
     );
   }
+
+  Widget _buildShimmerLoading() {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          _buildShimmerCard(),
+          const SizedBox(height: 16),
+          _buildShimmerCard(),
+          const SizedBox(height: 16),
+          _buildShimmerCard(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildShimmerCard() {
+    return AnimatedBuilder(
+      animation: shimmerAnimation,
+      builder: (context, child) {
+        return Container(
+          height: 80,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment(-1.0 + shimmerAnimation.value, 0.0),
+              end: Alignment(0.0 + shimmerAnimation.value, 0.0),
+              colors: const [
+                AppColors.surface,
+                AppColors.shimmer,
+                AppColors.surface,
+              ],
+            ),
+            borderRadius: BorderRadius.circular(16),
+          ),
+        );
+      },
+    );
+  }
 }
 
-class _FareCard extends StatelessWidget {
+class _EnhancedFareCard extends StatelessWidget {
   final String vehicle;
   final double? fare;
   final bool selected;
   final VoidCallback onTap;
+  final double? durationSec;
 
-  const _FareCard({
+  const _EnhancedFareCard({
     required this.vehicle,
     required this.fare,
     required this.selected,
     required this.onTap,
+    required this.durationSec,
   });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 120,
-        margin: EdgeInsets.only(right: 12),
-        padding: EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: selected ? Colors.blue[50] : Colors.grey[100],
-          borderRadius: BorderRadius.circular(12),
-          border: selected ? Border.all(color: Colors.blue, width: 2) : null,
+    final vehicleIcon = vehicleAssets[vehicle];
+    final vehicleInfo = _getVehicleInfo(vehicle);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        borderRadius: BorderRadius.circular(20),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: selected
+                ? LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      AppColors.primary.withOpacity(0.2),
+                      AppColors.accent.withOpacity(0.1),
+                    ],
+                  )
+                : const LinearGradient(
+                    colors: [
+                      Color(0xFF2A2A38),
+                      Color(0xFF1A1A24),
+                    ],
+                  ),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color:
+                  selected ? AppColors.primary : AppColors.primary.withOpacity(0.1),
+              width: selected ? 2 : 1,
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: AppColors.primary.withOpacity(0.3),
+                      blurRadius: 20,
+                      spreadRadius: 2,
+                    ),
+                  ]
+                : [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 10,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? AppColors.primary.withOpacity(0.2)
+                      : AppColors.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: selected
+                        ? AppColors.primary
+                        : AppColors.primary.withOpacity(0.2),
+                  ),
+                ),
+                child: vehicleIcon != null
+                    ? Image.asset(
+                        vehicleIcon,
+                        height: 32,
+                        width: 32,
+                        color: selected ? AppColors.primary : null,
+                      )
+                    : Icon(
+                        Icons.directions_car,
+                        color: selected ? AppColors.primary : AppColors.onSurface,
+                        size: 32,
+                      ),
+              ),
+              const SizedBox(width: 20),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          _capitalize(vehicle),
+                          style: AppTextStyles.heading3.copyWith(
+                            color: selected ? AppColors.primary : AppColors.onSurface,
+                          ),
+                        ),
+                        if (vehicle == 'premium') ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.warning.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: AppColors.warning.withOpacity(0.5),
+                              ),
+                            ),
+                            child: Text(
+                              'LUXURY',
+                              style: AppTextStyles.caption.copyWith(
+                                color: AppColors.warning,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      vehicleInfo['description']!,
+                      style: AppTextStyles.body2.copyWith(
+                        color: selected
+                            ? AppColors.primary.withOpacity(0.8)
+                            : AppColors.onSurfaceSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.access_time,
+                          size: 14,
+                          color: AppColors.onSurfaceTertiary,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          vehicleInfo['eta']!,
+                          style: AppTextStyles.caption.copyWith(
+                            color: AppColors.success,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        const Icon(
+                          Icons.people,
+                          size: 14,
+                          color: AppColors.onSurfaceTertiary,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          vehicleInfo['capacity']!,
+                          style: AppTextStyles.caption,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    fare != null ? '₹${fare!.toStringAsFixed(0)}' : '--',
+                    style: AppTextStyles.heading3.copyWith(
+                      color: selected ? AppColors.primary : AppColors.onSurface,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  if (selected)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.success.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: AppColors.success.withOpacity(0.5),
+                        ),
+                      ),
+                      child: Text(
+                        'SELECTED',
+                        style: AppTextStyles.caption.copyWith(
+                          color: AppColors.success,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+      ),
+    );
+  }
+
+  Map<String, String> _getVehicleInfo(String vehicle) {
+    switch (vehicle) {
+      case 'bike':
+        return {
+          'description': 'Fast & economical rides',
+          'eta': '2 min',
+          'capacity': '1 person',
+        };
+      case 'auto':
+        return {
+          'description': 'Quick shared rides',
+          'eta': '4 min',
+          'capacity': '3 people',
+        };
+      case 'car':
+        return {
+          'description': 'Comfortable AC rides',
+          'eta': '6 min',
+          'capacity': '4 people',
+        };
+      case 'premium':
+        return {
+          'description': 'Luxury sedan experience',
+          'eta': '8 min',
+          'capacity': '4 people',
+        };
+      case 'xl':
+        return {
+          'description': 'Extra space for groups',
+          'eta': '10 min',
+          'capacity': '6 people',
+        };
+      default:
+        return {
+          'description': 'Standard ride',
+          'eta': '5 min',
+          'capacity': '4 people',
+        };
+    }
+  }
+
+  String _capitalize(String s) =>
+      s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : s;
+}
+
+class _EnhancedBookButton extends StatelessWidget {
+  final String? selectedVehicle;
+  final VoidCallback? onPressed;
+
+  const _EnhancedBookButton({
+    required this.selectedVehicle,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isEnabled = selectedVehicle != null && onPressed != null;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      height: 60,
+      child: ElevatedButton(
+        onPressed: isEnabled
+            ? () {
+                HapticFeedback.mediumImpact();
+                onPressed!();
+              }
+            : null,
+        style: ElevatedButton.styleFrom(
+          backgroundColor:
+              isEnabled ? AppColors.primary : AppColors.surface,
+          foregroundColor:
+              isEnabled ? Colors.white : AppColors.onSurfaceTertiary,
+          elevation: isEnabled ? 8 : 0,
+          shadowColor: isEnabled ? AppColors.primary.withOpacity(0.5) : null,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(30),
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image.asset(
-              vehicleAssets[vehicle]!,
-              height: 60,
-              width: 60,
-              fit: BoxFit.contain,
-            ),
-            SizedBox(height: 8),
+            if (isEnabled) ...[
+              const Icon(
+                Icons.rocket_launch,
+                color: Colors.white,
+                size: 24,
+              ),
+              const SizedBox(width: 12),
+            ],
             Text(
-              vehicle.toUpperCase(),
-              style: GoogleFonts.poppins(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
+              isEnabled
+                  ? 'Book ${_capitalize(selectedVehicle!)} Now'
+                  : 'Select a vehicle',
+              style: AppTextStyles.button.copyWith(
+                color: isEnabled ? Colors.white : AppColors.onSurfaceTertiary,
+                fontSize: 18,
               ),
             ),
-            SizedBox(height: 4),
-            Text(
-              fare != null ? '₹${fare!.toStringAsFixed(0)}' : '--',
-              style: GoogleFonts.poppins(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
+            if (isEnabled) ...[
+              const SizedBox(width: 12),
+              const Icon(
+                Icons.arrow_forward,
+                color: Colors.white,
+                size: 24,
               ),
-            ),
+            ],
           ],
+        ),
+      ),
+    );
+  }
+
+  String _capitalize(String s) =>
+      s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : s;
+}
+
+class _EnhancedCancelButton extends StatelessWidget {
+  final VoidCallback onPressed;
+
+  const _EnhancedCancelButton({
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 280,
+      height: 56,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(28),
+        border: Border.all(
+          color: AppColors.error.withOpacity(0.5),
+          width: 2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.error.withOpacity(0.2),
+            blurRadius: 20,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onPressed,
+          borderRadius: BorderRadius.circular(28),
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.error.withOpacity(0.1),
+                  AppColors.error.withOpacity(0.05),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(28),
+            ),
+            child: Center(
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.close,
+                    color: AppColors.error,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Cancel Search',
+                    style: AppTextStyles.button.copyWith(
+                      color: AppColors.error,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );

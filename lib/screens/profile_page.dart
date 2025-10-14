@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 
 class ProfilePage extends StatefulWidget {
@@ -20,58 +20,115 @@ class _ProfilePageState extends State<ProfilePage> {
   TextEditingController emergencyCtrl = TextEditingController();
 
   String phone = '';
+  String customerId = '';
   String memberSince = '';
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    phone =
-        FirebaseAuth.instance.currentUser?.phoneNumber?.replaceAll('+91', '') ??
-            '';
-    _fetchProfile();
+    _loadUserData();
+  }
+
+  Future<void> _loadUserData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      customerId = prefs.getString('customerId') ?? '';
+      phone = prefs.getString('phoneNumber') ?? '';
+
+      if (customerId.isEmpty) {
+        setState(() => _isLoading = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("User not logged in")),
+          );
+        }
+        return;
+      }
+
+      await _fetchProfile();
+    } catch (e) {
+      debugPrint("Error loading user data: $e");
+      setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _fetchProfile() async {
-    final url = Uri.parse('http://192.168.1.9:5002/api/user/$phone');
-    final res = await http.get(url);
+    try {
+      setState(() => _isLoading = true);
 
-    if (res.statusCode == 200) {
-      final user = json.decode(res.body)['user'];
-      setState(() {
-        nameCtrl.text = user['name'] ?? '';
-        emailCtrl.text = user['email'] ?? '';
-        genderCtrl.text = user['gender'] ?? '';
-        dobCtrl.text = user['dateOfBirth'] ?? '';
-        emergencyCtrl.text = user['emergencyContact'] ?? '';
-        memberSince = user['memberSince'] ?? '';
-      });
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to load profile")),
-      );
+      final url = Uri.parse('https://cd4ec7060b0b.ngrok-free.app/api/user/id/$customerId');
+      final res = await http.get(url);
+
+      if (res.statusCode == 200) {
+        final user = json.decode(res.body)['user'];
+        setState(() {
+          phone = user['phone'] ?? phone;
+          nameCtrl.text = user['name'] ?? '';
+          emailCtrl.text = user['email'] ?? '';
+          genderCtrl.text = user['gender'] ?? '';
+          dobCtrl.text = user['dateOfBirth'] ?? '';
+          emergencyCtrl.text = user['emergencyContact'] ?? '';
+          memberSince = user['memberSince'] ?? '';
+          _isLoading = false;
+        });
+      } else {
+        setState(() => _isLoading = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Failed to load profile")),
+          );
+        }
+      }
+    } catch (e) {
+      setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e")),
+        );
+      }
     }
   }
 
   Future<void> _updateProfile() async {
-    final url = Uri.parse('http://192.168.1.9:5002/api/user/$phone');
-    final res = await http.put(
-      url,
-      headers: {'Content-Type': 'application/json'},
-      body: json.encode({
-        'name': nameCtrl.text.trim(),
-        'email': emailCtrl.text.trim(),
-        'gender': genderCtrl.text.trim(),
-        'dateOfBirth': dobCtrl.text.trim(),
-        'emergencyContact': emergencyCtrl.text.trim(),
-      }),
-    );
+    if (phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Phone number not available")),
+      );
+      return;
+    }
 
-    if (res.statusCode == 200) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text("Profile Updated")));
-    } else {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text("Failed to update")));
+    try {
+      final url = Uri.parse('https://cd4ec7060b0b.ngrok-free.app/api/user/$phone');
+      final res = await http.put(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'name': nameCtrl.text.trim(),
+          'email': emailCtrl.text.trim(),
+          'gender': genderCtrl.text.trim(),
+          'dateOfBirth': dobCtrl.text.trim(),
+          'emergencyContact': emergencyCtrl.text.trim(),
+        }),
+      );
+
+      if (mounted) {
+        if (res.statusCode == 200) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Profile Updated")),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Failed to update")),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e")),
+        );
+      }
     }
   }
 
@@ -84,7 +141,7 @@ class _ProfilePageState extends State<ProfilePage> {
         decoration: InputDecoration(
           prefixIcon: Icon(icon),
           labelText: label,
-          border: OutlineInputBorder(),
+          border: const OutlineInputBorder(),
         ),
         validator: (value) {
           if (required && (value == null || value.trim().isEmpty)) {
@@ -98,13 +155,19 @@ class _ProfilePageState extends State<ProfilePage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("Profile"),
-        backgroundColor: Color.fromRGBO(98, 205, 255, 1),
+        backgroundColor: const Color.fromRGBO(98, 205, 255, 1),
         foregroundColor: Colors.white,
         actions: [
-          IconButton(icon: Icon(Icons.help_outline), onPressed: () {}),
+          IconButton(icon: const Icon(Icons.help_outline), onPressed: () {}),
         ],
       ),
       body: Padding(
@@ -123,13 +186,12 @@ class _ProfilePageState extends State<ProfilePage> {
               ListTile(
                 leading: const Icon(Icons.phone),
                 title: const Text("Phone Number"),
-                subtitle: Text(phone),
+                subtitle: Text(phone.isNotEmpty ? phone : "Not available"),
               ),
               ListTile(
                 leading: const Icon(Icons.star),
                 title: const Text("Member Since"),
-                subtitle:
-                    Text(memberSince.isNotEmpty ? memberSince : "Fetching..."),
+                subtitle: Text(memberSince.isNotEmpty ? memberSince : "Not available"),
               ),
               const SizedBox(height: 24),
               ElevatedButton(
@@ -137,7 +199,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   if (_formKey.currentState!.validate()) _updateProfile();
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Color.fromRGBO(98, 205, 255, 1),
+                  backgroundColor: const Color.fromRGBO(98, 205, 255, 1),
                   padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
                 child: const Text("Update Profile",

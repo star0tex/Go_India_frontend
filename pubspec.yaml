@@ -60,6 +60,7 @@ dependencies:
   another_flushbar: ^1.10.29
   geocoding: ^2.1.0
   socket_io_client: ^3.1.2
+
  # flutter_sms: ^2.3.3
   flutter_local_notifications: ^17.0.0
 
@@ -68,6 +69,7 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  sendotp_flutter_sdk: ^0.0.1
 
   
 dependency_overrides:
@@ -75,8 +77,11 @@ dependency_overrides:
   http: ^1.0.0
 
 dev_dependencies:
+  flutter_launcher_icons: ^0.13.1
+
   flutter_test:
     sdk: flutter
+
 
 
   # The "flutter_lints" package below contains a set of recommended lints to
@@ -88,7 +93,10 @@ dev_dependencies:
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
-
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/logi.png"
 # The following section is specific to Flutter packages.
 flutter:
   uses-material-design: true
@@ -101,10 +109,14 @@ flutter:
     - assets/india_flag.json
     - assets/images/bikelive.png
     - assets/images/charminar_white.png
-    - assets/images/Primium.png
+    - assets/images/premium.png
     - assets/images/xl.png
+    - assets/images/login_illustration.png
+    - assets/images/logi.png
     - assets/images/background.png  
     - assets/images/cartoon_bg.png  
+    - assets/images/cartrip.jpg
+
   fonts:
     - family: Harrington
       fonts:
