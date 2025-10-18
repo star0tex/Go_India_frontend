@@ -15,14 +15,14 @@ import '../services/socket_service.dart';
 import 'models/trip_args.dart';
 import 'driver_en_route_page.dart';
 
-const String googleMapsApiKey = 'AIzaSyCqfjktNhxjKfM-JmpSwBk9KtgY429QWY8';
-const String apiBase = 'https://cd4ec7060b0b.ngrok-free.app';
+const String googleMapsApiKey = 'AIzaSyB7VstS4RZlou2jyNgzkKePGqNbs2MyzYY';
+const String apiBase = 'https://e4784d33af60.ngrok-free.app';
 
 const Map<String, String> vehicleAssets = {
   'bike': 'assets/images/bike.png',
   'auto': 'assets/images/auto.png',
   'car': 'assets/images/car.png',
-  'premium': 'assets/images/Primium.png',
+  'premium': 'assets/images/premium.png',
   'xl': 'assets/images/xl.png',
 };
 
@@ -134,6 +134,8 @@ final Map<String, double> _defaultFares = {
   "bike": 25.0,
   "auto": 40.0,
   "car": 80.0,
+  "premium": 150.0,  // ✅ ADD THIS
+  "xl": 120.0, 
 };
 final Map<String, double> _fares = {}; // Fetched fares from API
 
@@ -194,8 +196,59 @@ final Map<String, double> _fares = {}; // Fetched fares from API
     _setupSocketService();
     _loadBikeLiveIcon();
     _fetchNearbyDrivers();
-  }
+     WidgetsBinding.instance.addPostFrameCallback((_) {
+    _checkForActiveRide();
+  });
 
+  }
+  // ADD THIS METHOD to _ShortTripPageState class
+
+Future<void> _checkForActiveRide() async {
+  try {
+    // ✅ First check SharedPreferences for cached trip ID
+    final prefs = await SharedPreferences.getInstance();
+    final cachedTripId = prefs.getString('active_trip_id');
+    
+    if (cachedTripId != null) {
+      debugPrint('📦 Found cached trip ID: $cachedTripId');
+    }
+    
+    // Then check server for current status
+    final token = await _getFirebaseToken();
+    if (token == null) return;
+
+    final response = await http.get(
+      Uri.parse('$apiBase/api/trip/active/${widget.customerId}'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      
+      if (data['hasActiveRide'] == true && mounted) {
+        debugPrint('🔄 Restoring active ride from server');
+        
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => DriverEnRoutePage(
+              driverDetails: Map<String, dynamic>.from(data['driver']),
+              tripDetails: Map<String, dynamic>.from(data['trip']),
+            ),
+          ),
+        );
+      } else {
+        // ✅ No active ride found, clear cached ID
+        _clearActiveTripId();
+      }
+    }
+  } catch (e) {
+    debugPrint('❌ Error checking active ride: $e');
+  }
+}
   void _initializeAnimations() {
     _fadeController = AnimationController(
       duration: const Duration(milliseconds: 600),
@@ -266,6 +319,27 @@ Future<String?> _getFirebaseToken() async {
     return null;
   }
 }
+// ✅ Save active trip ID
+Future<void> _saveActiveTripId(String tripId) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('active_trip_id', tripId);
+    debugPrint('💾 Saved active trip ID: $tripId');
+  } catch (e) {
+    debugPrint('❌ Error saving trip ID: $e');
+  }
+}
+
+// ✅ Clear active trip ID
+Future<void> _clearActiveTripId() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('active_trip_id');
+    debugPrint('🗑️ Cleared active trip ID');
+  } catch (e) {
+    debugPrint('❌ Error clearing trip ID: $e');
+  }
+}
 
  void _setupSocketListeners() {
     _socketService.on('trip:accepted', (data) {
@@ -298,6 +372,7 @@ Future<String?> _getFirebaseToken() async {
 
       // ✅ Also convert driverDetails to proper type
       final typedDriverDetails = Map<String, dynamic>.from(driverDetails);
+        _saveActiveTripId(data['tripId']);
 
       Navigator.push(
         context,
@@ -321,7 +396,68 @@ Future<String?> _getFirebaseToken() async {
         });
       }
     });
-  } Future<void> _loadBikeLiveIcon() async {
+    _socketService.on('trip:cancelled', (data) {
+    if (!mounted) return;
+    
+    debugPrint('🚫 Trip cancelled: $data');
+    
+    setState(() {
+      _isWaitingForDriver = false;
+      _currentTripId = null;
+    });
+    
+    _rerequestTimer?.cancel();
+    _clearActiveTripId(); // Clear cached trip ID
+    
+    final cancelledBy = data['cancelledBy'] ?? 'unknown';
+    final message = cancelledBy == 'driver' 
+        ? 'Driver cancelled the trip. You can request a new ride.'
+        : 'Trip cancelled successfully.';
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.orange,
+        duration: Duration(seconds: 3),
+        action: cancelledBy == 'driver' ? SnackBarAction(
+          label: 'OK',
+          textColor: Colors.white,
+          onPressed: () {},
+        ) : null,
+      ),
+    );
+  });
+  _socketService.on('trip:clear_cache', (data) {
+    if (!mounted) return;
+    
+    debugPrint('🗑️ Clear cache signal received');
+    _clearActiveTripId();
+  });
+
+      // ✅ NEW: Listen for trip timeout (Requirement #3)
+  _socketService.on('trip:timeout', (data) {
+    if (!mounted) return;
+    
+    debugPrint('⏰ Trip timeout: $data');
+    
+    setState(() {
+      _isWaitingForDriver = false;
+    });
+    
+    _rerequestTimer?.cancel();
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(data['message'] ?? 'No drivers available. Please try again.'),
+        backgroundColor: Colors.orange,
+        duration: Duration(seconds: 5),
+      ),
+    );
+  });
+  } 
+  
+  
+  Future<void> _loadBikeLiveIcon() async {
     try {
       final bitmap = await gmaps.BitmapDescriptor.fromAssetImage(
         const ImageConfiguration(size: Size(64, 64)),
@@ -649,158 +785,216 @@ Future<String?> _getFirebaseToken() async {
     await prefs.setStringList(historyKey, _history);
   }
 
-  Future<void> _onPickupChanged(String value) async {
-    if (value.trim().isEmpty) {
-      setState(() {
-        _pickupPoint = null;
-        _pickupAddress = '';
-      });
-      return;
-    }
+ // Replace your _onPickupChanged method with this:
+Future<void> _onPickupChanged(String value) async {
+  debugPrint('🔍 Pickup changed: "$value"');
+  
+  // Don't clear the point immediately - let user type
+  if (value.trim().isEmpty) {
+    setState(() {
+      _pickupPoint = null;
+      _pickupAddress = '';
+      _suggestions = [];
+    });
+    return;
+  }
 
-    if (value.trim().length < 2) {
-      setState(() => _pickupPoint = null);
-      return;
-    }
+  // ✅ FIX: Don't return early for short input - just don't fetch yet
+  if (value.trim().length < 2) {
+    // Keep existing pickup point, just clear suggestions
+    setState(() {
+      _suggestions = [];
+    });
+    return;
+  }
 
-    if (value.trim() == _pickupAddress.trim()) {
-      return;
-    }
+  // ✅ FIX: Allow re-searching even if it matches current address
+  // This helps when user is editing or correcting the address
+  
+  // Fetch suggestions for pickup field
+  await _fetchSuggestions(value);
+}
+ Future<void> _fetchSuggestions(String query) async {
+  debugPrint('🔎 Fetching suggestions for: "$query"');
+  
+  if (query.trim().length < 2) {
+    debugPrint('⚠️ Query too short, clearing suggestions');
+    setState(() => _suggestions = []);
+    return;
+  }
 
+  // ✅ FIX: Cancel previous debounce timer
+  if (_debounce?.isActive ?? false) {
+    debugPrint('⏸️ Canceling previous search');
+    _debounce!.cancel();
+  }
+
+  // ✅ FIX: Use debounce for ALL fields (pickup and drop)
+  _debounce = Timer(const Duration(milliseconds: 300), () async {
     try {
+      debugPrint('🌐 Making API call to Google Places...');
+      
       final url = Uri.parse(
-        'https://maps.googleapis.com/maps/api/geocode/json?address=${Uri.encodeComponent(value)}&key=$googleMapsApiKey',
+        'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${Uri.encodeComponent(query)}'
+        '&key=$googleMapsApiKey'
+        '&location=${_pickupPoint?.latitude ?? 17.3850},${_pickupPoint?.longitude ?? 78.4867}'
+        '&radius=20000',
       );
-      final response = await http.get(url);
+
+      debugPrint('📡 URL: $url');
+
+      final response = await http.get(url).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          debugPrint('⏱️ Request timeout');
+          throw TimeoutException('Request timeout');
+        },
+      );
+
+      debugPrint('📥 Response status: ${response.statusCode}');
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final results = data['results'] as List?;
-        if (results != null && results.isNotEmpty) {
-          final location = results[0]['geometry']['location'];
-          final lat = location['lat'] as double;
-          final lng = location['lng'] as double;
-          final formatted = results[0]['formatted_address'] as String? ?? value;
-          setState(() {
-            _pickupPoint = gmaps.LatLng(lat, lng);
-            _pickupAddress = formatted;
-            if (_pickupController.text.trim() != formatted.trim()) {
-              if (value.trim() == _pickupAddress.trim()) {
-                _pickupController.text = formatted;
+        debugPrint('📦 Response data: $data');
+        
+        final status = data['status'];
+        if (status != 'OK' && status != 'ZERO_RESULTS') {
+          debugPrint('⚠️ API returned status: $status');
+          if (status == 'REQUEST_DENIED') {
+            debugPrint('❌ API key issue - check your Google Maps API key');
+          }
+        }
+
+        final predictions = data['predictions'] as List?;
+
+        if (predictions == null || predictions.isEmpty) {
+          debugPrint('📭 No predictions returned');
+          setState(() => _suggestions = []);
+          return;
+        }
+
+        debugPrint('✅ Found ${predictions.length} predictions');
+
+        List<Map<String, dynamic>> hyderabad = [];
+        List<Map<String, dynamic>> telangana = [];
+        List<Map<String, dynamic>> india = [];
+
+        for (var prediction in predictions) {
+          final placeId = prediction['place_id'] as String;
+          final description = prediction['description'] as String;
+          
+          debugPrint('  - $description');
+          
+          String city = '';
+          String state = '';
+          String country = '';
+
+          // ✅ FIX: Make details fetch optional - don't block on it
+          try {
+            final detailsUrl = Uri.parse(
+              'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$googleMapsApiKey&fields=address_components',
+            );
+            
+            final detailsResp = await http.get(detailsUrl).timeout(
+              const Duration(seconds: 3),
+            );
+            
+            if (detailsResp.statusCode == 200) {
+              final details = jsonDecode(detailsResp.body);
+              final result = details['result'];
+              if (result != null && result['address_components'] != null) {
+                for (var comp in result['address_components']) {
+                  final types = List<String>.from(comp['types']);
+                  if (types.contains('locality')) {
+                    city = comp['long_name'];
+                  }
+                  if (types.contains('administrative_area_level_1')) {
+                    state = comp['long_name'];
+                  }
+                  if (types.contains('country')) {
+                    country = comp['long_name'];
+                  }
+                }
               }
             }
-          });
-          final locationData = await _reverseGeocode(_pickupPoint!);
+          } catch (e) {
+            debugPrint('⚠️ Failed to fetch details for $placeId: $e');
+            // Continue anyway - we have the basic description
+          }
+
+          final suggestion = {
+            'description': description,
+            'place_id': placeId,
+            'city': city,
+            'state': state,
+            'country': country,
+          };
+
+          // Group by location
+          if (city.toLowerCase() == 'hyderabad') {
+            hyderabad.add(suggestion);
+          } else if (state.toLowerCase() == 'telangana') {
+            telangana.add(suggestion);
+          } else if (country.toLowerCase() == 'india' || country.isEmpty) {
+            india.add(suggestion);
+          } else {
+            india.add(suggestion);
+          }
+        }
+
+        final grouped = [
+          ...hyderabad,
+          ...telangana,
+          ...india,
+        ];
+        
+        debugPrint('✅ Setting ${grouped.length} suggestions');
+        
+        if (mounted) {
           setState(() {
-            _pickupState = locationData['state'] ?? '';
-            _pickupCity = locationData['city'] ?? '';
+            _suggestions = grouped;
           });
-          await _fetchNearbyDrivers();
-          _updateMarkers();
+        }
+      } else {
+        debugPrint('❌ HTTP Error: ${response.statusCode}');
+        debugPrint('   Body: ${response.body}');
+        
+        // ✅ FIX: Show user-friendly error
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Search failed: ${response.statusCode}'),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 2),
+            ),
+          );
         }
       }
     } catch (e) {
-      debugPrint('Failed to geocode pickup: $e');
-    }
-  }
-
-  Future<void> _fetchSuggestions(String query) async {
-    if (query.trim().length < 2) {
-      setState(() => _suggestions = []);
-      return;
-    }
-
-    if (_debounce?.isActive ?? false) _debounce!.cancel();
-
-    _debounce = Timer(const Duration(milliseconds: 300), () async {
-      try {
-        final url = Uri.parse(
-          'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=$query'
-          '&key=$googleMapsApiKey'
-          '&location=${_pickupPoint?.latitude ?? 17.3850},${_pickupPoint?.longitude ?? 78.4867}'
-          '&radius=20000',
-        );
-
-        final response = await http.get(url);
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          final predictions = data['predictions'] as List?;
-
-          if (predictions != null) {
-            List<Map<String, dynamic>> hyderabad = [];
-            List<Map<String, dynamic>> telangana = [];
-            List<Map<String, dynamic>> india = [];
-
-            for (var prediction in predictions) {
-              final placeId = prediction['place_id'] as String;
-              final description = prediction['description'] as String;
-              String city = '';
-              String state = '';
-              String country = '';
-
-              try {
-                final detailsUrl = Uri.parse(
-                  'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$googleMapsApiKey',
-                );
-                final detailsResp = await http.get(detailsUrl);
-                if (detailsResp.statusCode == 200) {
-                  final details = jsonDecode(detailsResp.body);
-                  final result = details['result'];
-                  if (result != null && result['address_components'] != null) {
-                    for (var comp in result['address_components']) {
-                      final types = List<String>.from(comp['types']);
-                      if (types.contains('locality')) {
-                        city = comp['long_name'];
-                      }
-                      if (types.contains('administrative_area_level_1')) {
-                        state = comp['long_name'];
-                      }
-                      if (types.contains('country')) {
-                        country = comp['long_name'];
-                      }
-                    }
-                  }
-                }
-              } catch (_) {}
-
-              final suggestion = {
-                'description': description,
-                'place_id': placeId,
-                'city': city,
-                'state': state,
-                'country': country,
-              };
-
-              if (city.toLowerCase() == 'hyderabad') {
-                hyderabad.add(suggestion);
-              } else if (state.toLowerCase() == 'telangana') {
-                telangana.add(suggestion);
-              } else if (country.toLowerCase() == 'india') {
-                india.add(suggestion);
-              } else {
-                india.add(suggestion);
-              }
-            }
-
-            final grouped = [
-              ...hyderabad,
-              ...telangana,
-              ...india,
-            ];
-            setState(() {
-              _suggestions = grouped;
-            });
-          }
-        }
-      } catch (e) {
+      debugPrint('❌ Error fetching suggestions: $e');
+      
+      // ✅ FIX: Fallback to history
+      if (mounted) {
         setState(() {
           _suggestions = _history
               .where((item) => item.toLowerCase().contains(query.toLowerCase()))
               .map((item) => {'description': item, 'place_id': ''})
               .toList();
         });
+        
+        if (_suggestions.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Unable to search. Check your internet connection.'),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
       }
-    });
-  }
+    }
+  });
+}
 
   Future<void> _selectSuggestion(Map<String, dynamic> suggestion) async {
     final placeId = suggestion['place_id'] as String;
@@ -1045,7 +1239,26 @@ Future<String?> _getFirebaseToken() async {
   }
 
   Future<void> _fetchFares() async {
-  if (_distanceKm == null || _durationSec == null) return;
+  // ✅ FIX 1: Check prerequisites with better logging
+  if (_distanceKm == null || _durationSec == null) {
+    debugPrint('⚠️ Cannot fetch fares: distanceKm=$_distanceKm, durationSec=$_durationSec');
+    return;
+  }
+
+  // ✅ FIX 2: Check location data
+  if (_pickupState.isEmpty || _pickupCity.isEmpty) {
+    debugPrint('⚠️ Missing location data: state=$_pickupState, city=$_pickupCity');
+    // Don't return - we'll use defaults
+  }
+
+  debugPrint('');
+  debugPrint('=' * 60);
+  debugPrint('💰 FETCHING FARES');
+  debugPrint('   Distance: ${_distanceKm!.toStringAsFixed(2)} km');
+  debugPrint('   Duration: ${(_durationSec! / 60).toStringAsFixed(1)} min');
+  debugPrint('   State: $_pickupState');
+  debugPrint('   City: $_pickupCity');
+  debugPrint('=' * 60);
 
   setState(() {
     _loadingFares = true;
@@ -1057,78 +1270,207 @@ Future<String?> _getFirebaseToken() async {
       ? [widget.vehicleType!]
       : vehicleLabels.where((v) => v.isNotEmpty).toList();
 
+  debugPrint('📋 Vehicles to fetch: $vehiclesToFetch');
+
   try {
     final results = await Future.wait(
       vehiclesToFetch.map((vehicleType) async {
         try {
-          debugPrint('Fetching fare for vehicleType="$vehicleType"...');
+          debugPrint('🔍 Fetching fare for vehicleType="$vehicleType"...');
+
+          final requestBody = {
+            'state': _pickupState,
+            'city': _pickupCity,
+            'vehicleType': vehicleType,
+            'category': 'short',
+            'distanceKm': _distanceKm,
+            'durationMin': _durationSec! / 60,
+          };
+
+          debugPrint('📤 Request body: ${jsonEncode(requestBody)}');
 
           final response = await http.post(
             Uri.parse('$apiBase/api/fares/calc'),
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'state': _pickupState,
-              'city': _pickupCity,
-              'vehicleType': vehicleType,
-              'category': 'short',
-              'distanceKm': _distanceKm,
-              'durationMin': _durationSec! / 60,
-            }),
+            body: jsonEncode(requestBody),
+          ).timeout(
+            const Duration(seconds: 5),
+            onTimeout: () {
+              debugPrint('⏱️ Timeout for $vehicleType');
+              throw TimeoutException('Fare calculation timeout');
+            },
           );
+
+          debugPrint('📥 Response for $vehicleType: ${response.statusCode}');
 
           if (response.statusCode == 200) {
             final data = jsonDecode(response.body);
+            debugPrint('📦 Response data: $data');
+            
             final total = (data['total'] as num).toDouble();
             debugPrint('✅ API fare for $vehicleType = ₹$total');
             return MapEntry(vehicleType, total);
           } else if (response.statusCode == 404) {
-            debugPrint('⚠️ Rate not found for $vehicleType, using default');
-            return MapEntry(vehicleType, _defaultFares[vehicleType] ?? 0.0);
+            final defaultFare = _defaultFares[vehicleType] ?? 0.0;
+            debugPrint('⚠️ Rate not found for $vehicleType, using default: ₹$defaultFare');
+            return MapEntry(vehicleType, defaultFare);
           } else {
             debugPrint('❌ Failed response ${response.statusCode} for $vehicleType');
-            return MapEntry(vehicleType, _defaultFares[vehicleType] ?? 0.0);
+            debugPrint('   Body: ${response.body}');
+            final defaultFare = _defaultFares[vehicleType] ?? 0.0;
+            return MapEntry(vehicleType, defaultFare);
           }
+        } on TimeoutException catch (e) {
+          debugPrint('⏱️ Timeout for $vehicleType: $e');
+          final defaultFare = _defaultFares[vehicleType] ?? 0.0;
+          return MapEntry(vehicleType, defaultFare);
         } catch (e) {
           debugPrint('❌ Error fetching fare for $vehicleType: $e');
-          return MapEntry(vehicleType, _defaultFares[vehicleType] ?? 0.0);
+          final defaultFare = _defaultFares[vehicleType] ?? 0.0;
+          return MapEntry(vehicleType, defaultFare);
         }
       }),
     );
 
+    // ✅ FIX 3: Always add fares, even if 0 (for better debugging)
     setState(() {
       for (var entry in results) {
-        if (entry.value > 0) {
-          _fares[entry.key] = entry.value;
-        }
+        _fares[entry.key] = entry.value;
+        debugPrint('   Added: ${entry.key} = ₹${entry.value}');
       }
     });
 
-    debugPrint('💰 Final fares loaded: $_fares');
+    debugPrint('');
+    debugPrint('💰 FINAL FARES LOADED:');
+    _fares.forEach((key, value) {
+      debugPrint('   $key: ₹$value');
+    });
+  debugPrint('=' * 60);
+    debugPrint('');
+
+    // ✅ FIX 4: Warn if all fares are 0
+    if (_fares.values.every((fare) => fare == 0)) {
+      debugPrint('⚠️ WARNING: All fares are 0! Check API or default fares.');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to calculate fares. Using estimates.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+
+    // ✅ FIX 5: Auto-select vehicle if only one option
+    if (_fares.length == 1 && _selectedVehicle == null) {
+      setState(() {
+        _selectedVehicle = _fares.keys.first;
+        debugPrint('🎯 Auto-selected vehicle: $_selectedVehicle');
+      });
+    }
+
   } catch (e) {
     debugPrint('❌ Unexpected error in _fetchFares: $e');
+    debugPrint('Stack trace: ${StackTrace.current}');
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error calculating fares: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   } finally {
     setState(() => _loadingFares = false);
+    debugPrint('✅ _loadingFares set to false');
   }
 }
 
 // Replace _confirmRide() with this:
+// Replace your existing _confirmRide() method with this fixed version:
+
+// Replace your existing _confirmRide() method with this fixed version:
+
+// Replace your existing _confirmRide() method with this fixed version:
+
 Future<void> _confirmRide() async {
-  final user = FirebaseAuth.instance.currentUser;
-  if (user == null ||
-      _selectedVehicle == null ||
-      _pickupPoint == null ||
-      _dropPoint == null) {
+  // ✅ FIX: Use widget.customerId instead of Firebase user
+  // Since you're passing MongoDB _id from login, use that directly
+    await _clearActiveTripId();
+
+  // ✅ ADD DETAILED LOGGING
+  debugPrint('=' * 50);
+  debugPrint('🔍 CONFIRM RIDE - VALIDATION CHECK');
+  debugPrint('Customer ID: ${widget.customerId}');
+  debugPrint('Selected Vehicle: $_selectedVehicle');
+  debugPrint('Pickup Point: $_pickupPoint');
+  debugPrint('Drop Point: $_dropPoint');
+  debugPrint('Fares Map: $_fares');
+  debugPrint('Loading Fares: $_loadingFares');
+  debugPrint('=' * 50);
+  
+  // ✅ FIX 1: Check if still loading fares
+  if (_loadingFares) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Please ensure all details are correct.')),
+          content: Text('Calculating fare, please wait...'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
+    return;
+  }
+  
+  // ✅ FIX 2: More specific error messages - Check customerId instead
+  if (widget.customerId.isEmpty) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Customer ID is missing. Please log in again.')),
+      );
+    }
+    return;
+  }
+  
+  if (_pickupPoint == null) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a pickup location.')),
+      );
+    }
+    return;
+  }
+  
+  if (_dropPoint == null) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a drop location.')),
+      );
+    }
+    return;
+  }
+  
+  if (_selectedVehicle == null) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a vehicle type.')),
       );
     }
     return;
   }
 
   final selected = _selectedVehicle!.toLowerCase().trim();
+  
+  // ✅ FIX 3: Better fare validation with fallback
   final selectedFare = _fares[selected] ?? _defaultFares[selected] ?? 0.0;
+
+  debugPrint('💰 FARE CALCULATION:');
+  debugPrint('   Vehicle: $selected');
+  debugPrint('   API Fare: ${_fares[selected]}');
+  debugPrint('   Default Fare: ${_defaultFares[selected]}');
+  debugPrint('   Final Fare: ₹$selectedFare');
 
   if (selectedFare <= 0) {
     if (mounted) {
@@ -1177,11 +1519,20 @@ Future<void> _confirmRide() async {
   debugPrint("📤 Sending ride request: ${jsonEncode(rideData)}");
 
   try {
+    // ✅ FIX 4: Add timeout to prevent hanging
     final response = await http.post(
       Uri.parse("$apiBase/api/trip/short"),
       headers: {"Content-Type": "application/json"},
       body: jsonEncode(rideData),
+    ).timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        throw TimeoutException('Request timed out');
+      },
     );
+
+    debugPrint('📥 Response Status: ${response.statusCode}');
+    debugPrint('📥 Response Body: ${response.body}');
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -1201,7 +1552,7 @@ Future<void> _confirmRide() async {
               return;
             }
             debugPrint("Re-requesting trip: $_currentTripId");
-            SocketService().emit('trip:rerequest', {'tripId': _currentTripId});
+            _socketService.emit('trip:rerequest', {'tripId': _currentTripId});
           });
         }
       }
@@ -1214,6 +1565,7 @@ Future<void> _confirmRide() async {
             content: Text(_isWaitingForDriver
                 ? 'Searching for nearby drivers...'
                 : 'No drivers available right now.'),
+            backgroundColor: _isWaitingForDriver ? Colors.green : Colors.orange,
           ),
         );
       }
@@ -1221,15 +1573,31 @@ Future<void> _confirmRide() async {
       debugPrint("❌ Trip API failed: ${response.statusCode} ${response.body}");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ride request failed: ${response.body}')),
+          SnackBar(
+            content: Text('Ride request failed: ${response.body}'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
+    }
+  } on TimeoutException catch (e) {
+    debugPrint("❌ Request timeout: $e");
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Request timed out. Please check your connection.'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   } catch (e) {
     debugPrint("❌ Error calling trip API: $e");
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to send ride request: $e')),
+        SnackBar(
+          content: Text('Failed to send ride request: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -1886,23 +2254,26 @@ class _EnhancedLocationInputBar extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: TextField(
-                controller: controller,
-                focusNode: focusNode,
-                style: AppTextStyles.body1.copyWith(fontSize: 15),
-                decoration: InputDecoration(
-                  hintText: hintText,
-                  hintStyle: AppTextStyles.body1.copyWith(
-                    color: AppColors.onSurfaceTertiary,
-                    fontSize: 15,
-                  ),
-                  border: InputBorder.none,
-                  suffixIcon: suffixWidget,
-                  isDense: true,
-                  contentPadding: EdgeInsets.zero,
-                ),
-                onChanged: onChanged,
-              ),
+              child:TextField(
+  controller: controller,
+  focusNode: focusNode,
+  style: AppTextStyles.body1.copyWith(fontSize: 15),
+  decoration: InputDecoration(
+    hintText: hintText,
+    hintStyle: AppTextStyles.body1.copyWith(
+      color: AppColors.onSurfaceTertiary,
+      fontSize: 15,
+    ),
+    border: InputBorder.none,
+    suffixIcon: suffixWidget,
+    isDense: true,
+    contentPadding: EdgeInsets.zero,
+  ),
+  onChanged: (value) {
+    debugPrint('🔤 TextField changed: "$value" (${label})');
+    onChanged(value);
+  },
+)
             ),
           ],
         ),

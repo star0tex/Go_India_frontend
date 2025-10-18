@@ -9,7 +9,7 @@ import 'dart:math';
 import '../services/socket_service.dart';
 import '../screens/chat_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+const String apiBase = 'https://e4784d33af60.ngrok-free.app';
 class DriverEnRoutePage extends StatefulWidget {
   final Map<String, dynamic> driverDetails;
   final Map<String, dynamic> tripDetails;
@@ -91,7 +91,7 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
 
   Future<void> _loadCustomMarkers() async {
     _bikeIcon = await BitmapDescriptor.fromAssetImage(
-      const ImageConfiguration(size: Size(48, 48)),
+      const ImageConfiguration(size: Size(288, 288)),
       'assets/images/bikelive.png',
     );
     _updateMarkers();
@@ -131,6 +131,40 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
         print('✅ Ride code updated to: $rideCode');
       }
     });
+  SocketService().on('trip:cancelled', (data) {
+    if (!mounted) return;
+    
+    debugPrint('🚫 Trip cancelled: $data');
+    
+    final cancelledBy = data['cancelledBy'] ?? 'unknown';
+    final message = cancelledBy == 'customer' 
+        ? 'Customer cancelled the trip'
+        : 'Trip has been cancelled';
+    
+    // Clear cached trip ID
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.remove('active_trip_id');
+      debugPrint('🗑️ Cleared cached trip ID');
+    });
+    
+    // Show message and navigate back
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 3),
+        ),
+      );
+      
+      // Navigate back to home
+      Future.delayed(Duration(seconds: 1), () {
+        if (mounted) {
+          Navigator.of(context).popUntil((route) => route.isFirst);
+        }
+      });
+    }
+  });
 
     // Listen for ride started event
     SocketService().on('trip:ride_started', (data) {
@@ -163,13 +197,48 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
       // Show completion dialog
       _showCompletionDialog();
     });
+   SocketService().on('trip:cash_collected', (data) async {
+  if (!mounted) return;
+  
+  debugPrint('💰 Payment confirmed - clearing state');
+  
+  // ✅ Clear cached trip ID from SharedPreferences
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('active_trip_id');
+    debugPrint('🗑️ Cleared cached trip ID');
+  } catch (e) {
+    debugPrint('❌ Error clearing trip ID: $e');
   }
+  
+  // Close dialog and navigate home
+  if (Navigator.canPop(context)) {
+    Navigator.pop(context);
+  }
+  Navigator.of(context).popUntil((route) => route.isFirst);
+  
+  Future.delayed(Duration(milliseconds: 300), () {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(data['message'] ?? 'Payment confirmed. Thank you!'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+  });
+});
+}
 
-  void _showCompletionDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
+
+ void _showCompletionDialog() {
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => WillPopScope(
+      onWillPop: () async => false, // Prevent back button
+      child: AlertDialog(
         title: const Text('Ride Completed! 🎉'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -181,22 +250,15 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
               style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            const Text('Thank you for riding with us!'),
+            const Text('Waiting for driver to collect payment...'),
+            const SizedBox(height: 16),
+            const CircularProgressIndicator(),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context); // Close dialog
-              Navigator.pop(context); // Go back to home
-            },
-            child: const Text('Done'),
-          ),
-        ],
       ),
-    );
-  }
-
+    ),
+  );
+}
   void _updateMarkers() {
     setState(() {
       _markers.clear();
@@ -449,58 +511,100 @@ List<LatLng> _decodePolyline(String encoded) {
   }
 
   void _cancelRide() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Theme.of(context).brightness == Brightness.dark
-            ? const Color(0xFF2A2520)
-            : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(
-          'Cancel Ride?',
-          style: GoogleFonts.poppins(
-            color: Theme.of(context).brightness == Brightness.dark
-                ? Colors.white
-                : Colors.black87,
-            fontWeight: FontWeight.bold,
-          ),
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      backgroundColor: Theme.of(context).brightness == Brightness.dark
+          ? const Color(0xFF2A2520)
+          : Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: Text(
+        'Cancel Ride?',
+        style: GoogleFonts.poppins(
+          color: Theme.of(context).brightness == Brightness.dark
+              ? Colors.white
+              : Colors.black87,
+          fontWeight: FontWeight.bold,
         ),
-        content: Text(
-          'Are you sure you want to cancel this ride?',
-          style: GoogleFonts.poppins(
-            color: Theme.of(context).brightness == Brightness.dark
-                ? Colors.white70
-                : Colors.black54,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'No',
-              style: GoogleFonts.poppins(color: Colors.grey),
-            ),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Ride cancelled')),
-              );
-            },
-            child: Text(
-              'Yes, Cancel',
-              style: GoogleFonts.poppins(
-                color: Colors.red,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
       ),
-    );
-  }
+      content: Text(
+        'Are you sure you want to cancel this ride?',
+        style: GoogleFonts.poppins(
+          color: Theme.of(context).brightness == Brightness.dark
+              ? Colors.white70
+              : Colors.black54,
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(
+            'No',
+            style: GoogleFonts.poppins(color: Colors.grey),
+          ),
+        ),
+        TextButton(
+          onPressed: () async {
+            Navigator.pop(context); // Close dialog
+            
+            // ✅ CALL BACKEND TO CANCEL TRIP
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              final customerId = prefs.getString('customerId') ?? '';
+              final tripId = widget.tripDetails['tripId']?.toString();
+              
+              if (tripId != null && customerId.isNotEmpty) {
+                final response = await http.post(
+                  Uri.parse('$apiBase/api/trip/cancel'),
+                  headers: {'Content-Type': 'application/json'},
+                  body: jsonEncode({
+                    'tripId': tripId,
+                    'cancelledBy': customerId,
+                  }),
+                );
+                
+                if (response.statusCode == 200) {
+                  debugPrint('✅ Trip cancelled successfully');
+                  
+                  // Clear cached trip ID
+                  await prefs.remove('active_trip_id');
+                  
+                  // Navigate back
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                  
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Ride cancelled successfully'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                } else {
+                  debugPrint('❌ Failed to cancel trip: ${response.statusCode}');
+                  throw Exception('Failed to cancel trip');
+                }
+              }
+            } catch (e) {
+              debugPrint('❌ Error cancelling trip: $e');
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Failed to cancel trip: $e'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          },
+          child: Text(
+            'Yes, Cancel',
+            style: GoogleFonts.poppins(
+              color: Colors.red,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+}
 
   @override
   Widget build(BuildContext context) {
