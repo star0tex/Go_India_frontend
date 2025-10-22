@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        FLUTTER_HOME = "C:\\src\\flutter"
+        FLUTTER_HOME = "C:\\flutter"
         PATH = "${FLUTTER_HOME}\\bin;${env.PATH}"
     }
 
@@ -10,6 +10,12 @@ pipeline {
         stage('Checkout Code') {
             steps {
                 git branch: 'main', url: 'https://github.com/star0tex/Go_India_frontend.git'
+            }
+        }
+        
+        stage('Configure Git for Flutter') {
+            steps {
+                bat 'git config --global --add safe.directory C:/flutter'
             }
         }
 
