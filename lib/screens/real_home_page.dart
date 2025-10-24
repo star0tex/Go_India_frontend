@@ -290,7 +290,7 @@ Future<void> _fetchUserProfile() async {
     }
     
     var res = await http.get(
-      Uri.parse('https://e4784d33af60.ngrok-free.app/api/user/id/${widget.customerId}')
+      Uri.parse('https://7668d252ef1d.ngrok-free.app/api/user/id/${widget.customerId}')
     );
     
     if (res.statusCode == 200) {

@@ -1,9 +1,9 @@
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'home_page.dart';
@@ -20,21 +20,26 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _otpController = TextEditingController();
   final FocusNode _otpFocus = FocusNode();
-  final String apiUrl = 'https://e4784d33af60.ngrok-free.app';
+  final String apiUrl = 'https://7668d252ef1d.ngrok-free.app';
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   bool _codeSent = false;
   bool _isLoading = false;
-  
-  // ✅ NEW: OTP Display Card
-  String? _displayedOTP;
-  Timer? _otpDisplayTimer;
-  int _remainingSeconds = 5;
+  String? _verificationId;
+  int? _resendToken;
 
   @override
   void initState() {
     super.initState();
+    _initializeFirebaseAuth();
   }
 
+  Future<void> _initializeFirebaseAuth() async {
+    // Set language code for OTP SMS (optional)
+    await _auth.setLanguageCode('en');
+  }
+
+  // ✅ Send OTP using Firebase Phone Auth (FREE with Spark plan)
   Future<void> _sendOTP() async {
     if (_isLoading) return;
 
@@ -42,8 +47,6 @@ class _LoginPageState extends State<LoginPage> {
       _codeSent = false;
       _otpController.clear();
       _isLoading = true;
-      _displayedOTP = null; // Clear previous OTP
-      _remainingSeconds = 5;
     });
 
     final rawPhone = _phoneController.text.trim();
@@ -56,79 +59,75 @@ class _LoginPageState extends State<LoginPage> {
     final String phoneWithCode = "+91$rawPhone";
 
     try {
-      final response = await http.post(
-        Uri.parse("$apiUrl/api/auth/send-otp"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "phone": phoneWithCode,
-        }),
-      ).timeout(
-        const Duration(seconds: 15),
-        onTimeout: () {
-          throw Exception("Connection timeout");
+      // ✅ Firebase Phone Auth - NO COST with Spark plan (10k/month free)
+      await _auth.verifyPhoneNumber(
+        phoneNumber: phoneWithCode,
+        timeout: const Duration(seconds: 60),
+        
+        // When OTP is sent successfully
+        verificationCompleted: (PhoneAuthCredential credential) async {
+          // Auto-retrieval or instant verification (Android only)
+          debugPrint("✅ Auto verification completed");
+          await _signInWithCredential(credential);
         },
+        
+        // When OTP verification fails
+        verificationFailed: (FirebaseAuthException e) {
+          setState(() => _isLoading = false);
+          debugPrint("❌ Verification failed: ${e.code} - ${e.message}");
+          
+          if (e.code == 'invalid-phone-number') {
+            _showMessage('Invalid phone number format', isError: true);
+          } else if (e.code == 'too-many-requests') {
+            _showMessage('Too many requests. Try again later.', isError: true);
+          } else {
+            _showMessage('Verification failed: ${e.message}', isError: true);
+          }
+        },
+        
+        // When OTP is sent to the phone
+        codeSent: (String verificationId, int? resendToken) {
+          setState(() {
+            _isLoading = false;
+            _codeSent = true;
+            _verificationId = verificationId;
+            _resendToken = resendToken;
+          });
+          
+          _showMessage("OTP sent to your phone via Firebase", isError: false);
+          
+          Future.delayed(
+            const Duration(milliseconds: 300),
+            () => _otpFocus.requestFocus(),
+          );
+          
+          debugPrint("✅ OTP sent successfully. Verification ID: $verificationId");
+        },
+        
+        // When OTP auto-retrieval times out
+        codeAutoRetrievalTimeout: (String verificationId) {
+          _verificationId = verificationId;
+          debugPrint("⏱️ Auto retrieval timeout");
+        },
+        
+        // For resending OTP
+        forceResendingToken: _resendToken,
       );
 
-      setState(() => _isLoading = false);
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        
-        // ✅ NEW: Extract OTP from response if available (for development)
-        final otp = data['otp']?.toString();
-        
-        setState(() {
-          _codeSent = true;
-          if (otp != null && otp.length == 6) {
-            _displayedOTP = otp;
-            _startOTPDisplayTimer();
-          }
-        });
-        
-        _showMessage(
-          "OTP sent to your phone", 
-          isError: false
-        );
-        
-        Future.delayed(
-          const Duration(milliseconds: 300),
-          () => _otpFocus.requestFocus(),
-        );
-      } else {
-        _showMessage("Failed to send OTP. Try again.", isError: true);
+      // ✅ Register FCM token with your backend
+      String? fcmToken = await FirebaseMessaging.instance.getToken();
+      if (fcmToken != null) {
+        await _sendFCMTokenToServer(phoneWithCode, fcmToken);
       }
+
     } catch (e) {
       setState(() => _isLoading = false);
-      if (e.toString().contains("Connection timeout")) {
-        _showMessage("Connection timeout. Check your internet.", isError: true);
-      } else {
-        _showMessage("Failed to send OTP: ${e.toString()}", isError: true);
-      }
+      _showMessage("Failed to send OTP: ${e.toString()}", isError: true);
       debugPrint("Send OTP error: $e");
     }
   }
 
-  // ✅ NEW: Start countdown timer for OTP display
-  void _startOTPDisplayTimer() {
-    _otpDisplayTimer?.cancel();
-    _remainingSeconds = 5;
-    
-    _otpDisplayTimer = Timer.periodic(const Duration(seconds: 7), (timer) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-      
-      setState(() {
-        _remainingSeconds--;
-        if (_remainingSeconds <= 0) {
-          _displayedOTP = null;
-          timer.cancel();
-        }
-      });
-    });
-  }
-
+  // ✅ Verify OTP and sign in with Firebase
   Future<void> _verifyOTPAndLogin() async {
     if (_isLoading) return;
 
@@ -138,56 +137,102 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
+    if (_verificationId == null) {
+      _showMessage("Please request OTP first.", isError: true);
+      return;
+    }
+
     setState(() => _isLoading = true);
     _showLoadingDialog();
 
-    final rawPhone = _phoneController.text.trim();
-    final phoneWithCode = "+91$rawPhone";
+    try {
+      // ✅ Create credential with OTP
+      PhoneAuthCredential credential = PhoneAuthProvider.credential(
+        verificationId: _verificationId!,
+        smsCode: otp,
+      );
 
+      // ✅ Sign in with Firebase
+      await _signInWithCredential(credential);
+
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      setState(() => _isLoading = false);
+      
+      if (e is FirebaseAuthException) {
+        if (e.code == 'invalid-verification-code') {
+          _showMessage('Invalid OTP. Please try again.', isError: true);
+        } else if (e.code == 'session-expired') {
+          _showMessage('OTP expired. Request a new one.', isError: true);
+          setState(() => _codeSent = false);
+        } else {
+          _showMessage('Verification failed: ${e.message}', isError: true);
+        }
+      } else {
+        _showMessage("Login error: ${e.toString()}", isError: true);
+      }
+      
+      debugPrint("Login error: $e");
+    }
+  }
+
+  // ✅ Sign in with Firebase credential and sync with your backend
+  Future<void> _signInWithCredential(PhoneAuthCredential credential) async {
+    try {
+      // Sign in to Firebase
+      UserCredential userCredential = await _auth.signInWithCredential(credential);
+      User? firebaseUser = userCredential.user;
+
+      if (firebaseUser == null) {
+        throw Exception("Firebase user is null");
+      }
+
+      debugPrint("✅ Firebase sign-in successful: ${firebaseUser.uid}");
+
+      // Get phone number
+      final phoneNumber = firebaseUser.phoneNumber ?? _phoneController.text.trim();
+      final rawPhone = phoneNumber.replaceAll('+91', '').replaceAll('+', '');
+
+      // ✅ Sync with your backend
+      await _syncWithBackend(rawPhone, firebaseUser.uid);
+
+    } catch (e) {
+      if (mounted) Navigator.pop(context);
+      setState(() => _isLoading = false);
+      _showMessage("Sign-in failed: ${e.toString()}", isError: true);
+      debugPrint("Sign-in error: $e");
+    }
+  }
+
+  // ✅ Sync Firebase user with your backend
+  Future<void> _syncWithBackend(String phone, String firebaseUid) async {
     try {
       final response = await http.post(
-        Uri.parse("$apiUrl/api/auth/verify-otp"),
+        Uri.parse("$apiUrl/api/auth/firebase-sync"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
-          "phone": phoneWithCode,
-          "otp": otp,
+          "phone": phone,
+          "firebaseUid": firebaseUid,
           "role": "customer",
         }),
-      ).timeout(
-        const Duration(seconds: 30),
-        onTimeout: () {
-          throw Exception("Connection timeout");
-        },
-      );
+      ).timeout(const Duration(seconds: 30));
 
       if (mounted) Navigator.pop(context);
       setState(() => _isLoading = false);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        debugPrint("Server response: $data");
+        debugPrint("Backend sync response: $data");
 
         final profileComplete = data["profileComplete"] == true;
-
         String customerId = data["customerId"]?.toString() ?? 
                             data["user"]?["_id"]?.toString() ?? 
-                            data["userId"]?.toString() ?? 
-                            rawPhone;
+                            phone;
 
-        debugPrint("Using customerId: $customerId");
-        debugPrint("Profile complete: $profileComplete");
-
+        // Save to SharedPreferences
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString("customerId", customerId);
-        await prefs.setString("phoneNumber", rawPhone);
-
-        if (data["firebaseToken"] != null) {
-          try {
-            await FirebaseAuth.instance.signInWithCustomToken(data["firebaseToken"]);
-          } catch (e) {
-            debugPrint("Firebase sign-in failed: $e");
-          }
-        }
+        await prefs.setString("phoneNumber", phone);
 
         if (profileComplete) {
           _showMessage("Welcome back!", isError: false);
@@ -197,7 +242,7 @@ class _LoginPageState extends State<LoginPage> {
 
         final Widget next = profileComplete
             ? RealHomePage(customerId: customerId)
-            : HomePage(phone: rawPhone, customerId: customerId);
+            : HomePage(phone: phone, customerId: customerId);
 
         await Future.delayed(const Duration(milliseconds: 500));
 
@@ -210,15 +255,36 @@ class _LoginPageState extends State<LoginPage> {
       } else {
         final errorData = jsonDecode(response.body);
         _showMessage(
-          errorData['message'] ?? "Login failed: ${response.body}", 
+          errorData['message'] ?? "Backend sync failed", 
           isError: true
         );
       }
     } catch (e) {
       if (mounted) Navigator.pop(context);
       setState(() => _isLoading = false);
-      _showMessage("Connection error: ${e.toString()}", isError: true);
-      debugPrint("Login error: $e");
+      _showMessage("Backend sync error: ${e.toString()}", isError: true);
+      debugPrint("Backend sync error: $e");
+    }
+  }
+
+  Future<void> _sendFCMTokenToServer(String phone, String token) async {
+    try {
+      final response = await http.post(
+        Uri.parse("$apiUrl/api/users/update-fcm"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "phone": phone,
+          "fcmToken": token,
+        }),
+      );
+      
+      if (response.statusCode == 200) {
+        debugPrint("✅ FCM token registered for $phone");
+      } else {
+        debugPrint("⚠️ FCM token registration failed: ${response.body}");
+      }
+    } catch (e) {
+      debugPrint("⚠️ Failed to send FCM token: $e");
     }
   }
 
@@ -260,154 +326,6 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  // ✅ NEW: Build OTP Display Card
-  Widget _buildOTPDisplayCard() {
-    if (_displayedOTP == null) return const SizedBox.shrink();
-
-    return TweenAnimationBuilder<double>(
-      duration: const Duration(milliseconds: 300),
-      tween: Tween(begin: 0.0, end: 1.0),
-      builder: (context, value, child) {
-        return Transform.scale(
-          scale: value,
-          child: Opacity(
-            opacity: value,
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 20),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.orange.shade100,
-                    Colors.orange.shade50,
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: Colors.orange.shade300,
-                  width: 2,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.orange.withOpacity(0.3),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.orange.shade200,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(
-                          Icons.key,
-                          color: Colors.orange,
-                          size: 20,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Development Mode',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.black54,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                const Text(
-                                  'Your OTP: ',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                                Text(
-                                  _displayedOTP!,
-                                  style: const TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: 2,
-                                    color: Colors.orange,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                GestureDetector(
-                                  onTap: () {
-                                    Clipboard.setData(
-                                      ClipboardData(text: _displayedOTP!),
-                                    );
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('OTP copied!'),
-                                        duration: Duration(seconds: 1),
-                                      ),
-                                    );
-                                  },
-                                  child: const Icon(
-                                    Icons.copy,
-                                    size: 16,
-                                    color: Colors.orange,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: Colors.orange,
-                            width: 3,
-                          ),
-                        ),
-                        child: Center(
-                          child: Text(
-                            '$_remainingSeconds',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.orange,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  LinearProgressIndicator(
-                    value: _remainingSeconds / 5,
-                    backgroundColor: Colors.orange.shade100,
-                    color: Colors.orange,
-                    minHeight: 4,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -416,7 +334,6 @@ class _LoginPageState extends State<LoginPage> {
         child: Column(
           children: [
             const SizedBox(height: 20),
-
             const Text(
               "GhumoIndia",
               style: TextStyle(
@@ -426,7 +343,6 @@ class _LoginPageState extends State<LoginPage> {
               ),
             ),
             const SizedBox(height: 20),
-
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -446,7 +362,6 @@ class _LoginPageState extends State<LoginPage> {
                       style: TextStyle(fontSize: 16, color: Colors.black54),
                     ),
                     const SizedBox(height: 30),
-
                     TextField(
                       controller: _phoneController,
                       keyboardType: TextInputType.phone,
@@ -463,14 +378,9 @@ class _LoginPageState extends State<LoginPage> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         counterText: '',
-                        enabled: !_codeSent,
                       ),
                     ),
                     const SizedBox(height: 20),
-
-                    // ✅ NEW: Show OTP Display Card
-                    _buildOTPDisplayCard(),
-
                     if (_codeSent) ...[
                       TextField(
                         controller: _otpController,
@@ -497,7 +407,6 @@ class _LoginPageState extends State<LoginPage> {
                         onSubmitted: (_) => _verifyOTPAndLogin(),
                       ),
                       const SizedBox(height: 10),
-                      const SizedBox(height: 10),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -508,8 +417,7 @@ class _LoginPageState extends State<LoginPage> {
                                     setState(() {
                                       _codeSent = false;
                                       _otpController.clear();
-                                      _displayedOTP = null;
-                                      _otpDisplayTimer?.cancel();
+                                      _verificationId = null;
                                     });
                                   },
                             child: const Text('Change Number'),
@@ -521,9 +429,7 @@ class _LoginPageState extends State<LoginPage> {
                         ],
                       ),
                     ],
-
                     const SizedBox(height: 20),
-
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
@@ -555,7 +461,6 @@ class _LoginPageState extends State<LoginPage> {
                 ),
               ),
             ),
-
             Image.asset(
               "assets/images/login_illustration.png",
               height: 180,
@@ -575,7 +480,6 @@ class _LoginPageState extends State<LoginPage> {
     _phoneController.dispose();
     _otpController.dispose();
     _otpFocus.dispose();
-    _otpDisplayTimer?.cancel();
     super.dispose();
   }
 }

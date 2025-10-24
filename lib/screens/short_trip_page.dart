@@ -16,7 +16,7 @@ import 'models/trip_args.dart';
 import 'driver_en_route_page.dart';
 
 const String googleMapsApiKey = 'AIzaSyB7VstS4RZlou2jyNgzkKePGqNbs2MyzYY';
-const String apiBase = 'https://e4784d33af60.ngrok-free.app';
+const String apiBase = 'https://7668d252ef1d.ngrok-free.app';
 
 const Map<String, String> vehicleAssets = {
   'bike': 'assets/images/bike.png',
@@ -29,70 +29,75 @@ const Map<String, String> vehicleAssets = {
 const List<String> vehicleLabels = ['bike', 'auto', 'car', 'premium', 'xl'];
 const List<String> invalidHistoryTerms = ['auto', 'bike', 'car'];
 
-// Enhanced Color Palette
+// --- UPDATED COLOR PALETTE (Matching RealHomePage) ---
 class AppColors {
-  static const Color primary = Color(0xFF6C5CE7);
-  static const Color primaryDark = Color(0xFF5A4FCF);
-  static const Color accent = Color(0xFFFF6B6B);
-  static const Color accentLight = Color(0xFFFF8E8E);
-  static const Color success = Color(0xFF00D684);
-  static const Color warning = Color(0xFFFFB800);
-  static const Color error = Color(0xFFFF4757);
-  static const Color background = Color(0xFF0A0A0F);
-  static const Color surface = Color(0xFF1A1A24);
-  static const Color surfaceLight = Color(0xFF2A2A38);
-  static const Color onSurface = Color(0xFFFFFFFF);
-  static const Color onSurfaceSecondary = Color(0xFFB8B8D1);
-  static const Color onSurfaceTertiary = Color(0xFF8E8EA9);
-  static const Color divider = Color(0xFF2A2A38);
-  static const Color shimmer = Color(0xFF3A3A4A);
+  // Core palette based on 60-30-10 rule
+  static const Color primary = Color.fromARGB(255, 212, 120, 0); // 30% Warm Orange
+  static const Color background = Colors.white;     // 60% White
+  static const Color onSurface = Colors.black;      // 10% Black
+
+  // Derived & Utility Colors
+  static const Color surface = Color(0xFFF5F5F5); // Light gray for cards/inputs
+  static const Color onPrimary = Colors.white;      // Text color on primary background
+  static const Color onSurfaceSecondary = Colors.black54; // For less important text
+  static const Color onSurfaceTertiary = Colors.black38;  // For hints and captions
+  static const Color divider = Color(0xFFEEEEEE);   // Light gray for dividers
+
+  // Standard Status Colors
+  static const Color success = Color.fromARGB(255, 0, 66, 3); // Dark green
+  static const Color warning = Color(0xFFFFA000);
+  static const Color error = Color(0xFFD32F2F);
+  
+  // Special
+  static const Color serviceCardBg = Color.fromARGB(255, 238, 216, 189); // Light cream
+  static const Color shimmer = Color(0xFFE0E0E0);
 }
 
-// Enhanced Typography
+// --- UPDATED TYPOGRAPHY ---
 class AppTextStyles {
   static TextStyle get heading1 => GoogleFonts.plusJakartaSans(
         fontSize: 32,
         fontWeight: FontWeight.w800,
-        color: AppColors.onSurface,
+        color: AppColors.onSurface, // Black
         letterSpacing: -0.5,
       );
 
   static TextStyle get heading2 => GoogleFonts.plusJakartaSans(
         fontSize: 24,
         fontWeight: FontWeight.w700,
-        color: AppColors.onSurface,
+        color: AppColors.onSurface, // Black
         letterSpacing: -0.3,
       );
 
   static TextStyle get heading3 => GoogleFonts.plusJakartaSans(
         fontSize: 18,
         fontWeight: FontWeight.w600,
-        color: AppColors.onSurface,
+        color: AppColors.onSurface, // Black
       );
 
   static TextStyle get body1 => GoogleFonts.plusJakartaSans(
         fontSize: 16,
         fontWeight: FontWeight.w500,
-        color: AppColors.onSurface,
+        color: AppColors.onSurface, // Black
       );
 
   static TextStyle get body2 => GoogleFonts.plusJakartaSans(
         fontSize: 14,
         fontWeight: FontWeight.w500,
-        color: AppColors.onSurfaceSecondary,
+        color: AppColors.onSurfaceSecondary, // Gray
       );
 
   static TextStyle get caption => GoogleFonts.plusJakartaSans(
         fontSize: 12,
         fontWeight: FontWeight.w500,
-        color: AppColors.onSurfaceTertiary,
+        color: AppColors.onSurfaceTertiary, // Light Gray
         letterSpacing: 0.5,
       );
 
   static TextStyle get button => GoogleFonts.plusJakartaSans(
         fontSize: 16,
         fontWeight: FontWeight.w700,
-        color: AppColors.onSurface,
+        color: AppColors.onPrimary, // White
       );
 }
 
@@ -130,14 +135,15 @@ class _ShortTripPageState extends State<ShortTripPage>
   late Animation<Offset> _slideAnimation;
   late Animation<double> _pulseAnimation;
   late Animation<double> _shimmerAnimation;
-final Map<String, double> _defaultFares = {
-  "bike": 25.0,
-  "auto": 40.0,
-  "car": 80.0,
-  "premium": 150.0,  // ✅ ADD THIS
-  "xl": 120.0, 
-};
-final Map<String, double> _fares = {}; // Fetched fares from API
+
+  final Map<String, double> _defaultFares = {
+    "bike": 25.0,
+    "auto": 40.0,
+    "car": 80.0,
+    "premium": 150.0,
+    "xl": 120.0,
+  };
+  final Map<String, double> _fares = {};
 
   // Focus nodes
   final FocusNode _pickupFocusNode = FocusNode();
@@ -196,59 +202,55 @@ final Map<String, double> _fares = {}; // Fetched fares from API
     _setupSocketService();
     _loadBikeLiveIcon();
     _fetchNearbyDrivers();
-     WidgetsBinding.instance.addPostFrameCallback((_) {
-    _checkForActiveRide();
-  });
-
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkForActiveRide();
+    });
   }
-  // ADD THIS METHOD to _ShortTripPageState class
 
-Future<void> _checkForActiveRide() async {
-  try {
-    // ✅ First check SharedPreferences for cached trip ID
-    final prefs = await SharedPreferences.getInstance();
-    final cachedTripId = prefs.getString('active_trip_id');
-    
-    if (cachedTripId != null) {
-      debugPrint('📦 Found cached trip ID: $cachedTripId');
-    }
-    
-    // Then check server for current status
-    final token = await _getFirebaseToken();
-    if (token == null) return;
+  Future<void> _checkForActiveRide() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final cachedTripId = prefs.getString('active_trip_id');
 
-    final response = await http.get(
-      Uri.parse('$apiBase/api/trip/active/${widget.customerId}'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-      },
-    );
-
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      
-      if (data['hasActiveRide'] == true && mounted) {
-        debugPrint('🔄 Restoring active ride from server');
-        
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => DriverEnRoutePage(
-              driverDetails: Map<String, dynamic>.from(data['driver']),
-              tripDetails: Map<String, dynamic>.from(data['trip']),
-            ),
-          ),
-        );
-      } else {
-        // ✅ No active ride found, clear cached ID
-        _clearActiveTripId();
+      if (cachedTripId != null) {
+        debugPrint('📦 Found cached trip ID: $cachedTripId');
       }
+
+      final token = await _getFirebaseToken();
+      if (token == null) return;
+
+      final response = await http.get(
+        Uri.parse('$apiBase/api/trip/active/${widget.customerId}'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        if (data['hasActiveRide'] == true && mounted) {
+          debugPrint('🔄 Restoring active ride from server');
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => DriverEnRoutePage(
+                driverDetails: Map<String, dynamic>.from(data['driver']),
+                tripDetails: Map<String, dynamic>.from(data['trip']),
+              ),
+            ),
+          );
+        } else {
+          _clearActiveTripId();
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ Error checking active ride: $e');
     }
-  } catch (e) {
-    debugPrint('❌ Error checking active ride: $e');
   }
-}
+
   void _initializeAnimations() {
     _fadeController = AnimationController(
       duration: const Duration(milliseconds: 600),
@@ -309,48 +311,44 @@ Future<void> _checkForActiveRide() async {
     _socketService.connectCustomer(customerId: widget.customerId);
     _setupSocketListeners();
   }
-Future<String?> _getFirebaseToken() async {
-  try {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return null;
-    return await user.getIdToken();
-  } catch (e) {
-    debugPrint('Error getting Firebase token: $e');
-    return null;
-  }
-}
-// ✅ Save active trip ID
-Future<void> _saveActiveTripId(String tripId) async {
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('active_trip_id', tripId);
-    debugPrint('💾 Saved active trip ID: $tripId');
-  } catch (e) {
-    debugPrint('❌ Error saving trip ID: $e');
-  }
-}
 
-// ✅ Clear active trip ID
-Future<void> _clearActiveTripId() async {
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('active_trip_id');
-    debugPrint('🗑️ Cleared active trip ID');
-  } catch (e) {
-    debugPrint('❌ Error clearing trip ID: $e');
+  Future<String?> _getFirebaseToken() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return null;
+      return await user.getIdToken();
+    } catch (e) {
+      debugPrint('Error getting Firebase token: $e');
+      return null;
+    }
   }
-}
 
- void _setupSocketListeners() {
+  Future<void> _saveActiveTripId(String tripId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('active_trip_id', tripId);
+      debugPrint('💾 Saved active trip ID: $tripId');
+    } catch (e) {
+      debugPrint('❌ Error saving trip ID: $e');
+    }
+  }
+
+  Future<void> _clearActiveTripId() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('active_trip_id');
+      debugPrint('🗑️ Cleared active trip ID');
+    } catch (e) {
+      debugPrint('❌ Error clearing trip ID: $e');
+    }
+  }
+
+  void _setupSocketListeners() {
     _socketService.on('trip:accepted', (data) {
       debugPrint("==========================================");
       debugPrint("🔔 Trip accepted event received!");
       debugPrint("📦 Full data: $data");
-      debugPrint("🔑 Data keys: ${data.keys}");
-      debugPrint("🎫 rideCode value: ${data['rideCode']}");
-      debugPrint("🆔 tripId value: ${data['tripId']}");
-      debugPrint("==========================================");
-      
+
       final driverDetails = data['driver'] ?? data['driverDetails'] ?? {};
       final tripDetails = data['trip'] ?? data['tripDetails'] ?? {};
 
@@ -360,19 +358,14 @@ Future<void> _clearActiveTripId() async {
 
       if (!mounted) return;
 
-      // ✅ Convert to Map<String, dynamic> and add rideCode and tripId
       final enrichedTripDetails = <String, dynamic>{
         ...Map<String, dynamic>.from(tripDetails),
         'rideCode': data['rideCode'],
         'tripId': data['tripId'],
       };
 
-      debugPrint("✅ Enriched tripDetails: $enrichedTripDetails");
-      debugPrint("✅ rideCode in enriched: ${enrichedTripDetails['rideCode']}");
-
-      // ✅ Also convert driverDetails to proper type
       final typedDriverDetails = Map<String, dynamic>.from(driverDetails);
-        _saveActiveTripId(data['tripId']);
+      _saveActiveTripId(data['tripId']);
 
       Navigator.push(
         context,
@@ -396,67 +389,61 @@ Future<void> _clearActiveTripId() async {
         });
       }
     });
-    _socketService.on('trip:cancelled', (data) {
-    if (!mounted) return;
-    
-    debugPrint('🚫 Trip cancelled: $data');
-    
-    setState(() {
-      _isWaitingForDriver = false;
-      _currentTripId = null;
-    });
-    
-    _rerequestTimer?.cancel();
-    _clearActiveTripId(); // Clear cached trip ID
-    
-    final cancelledBy = data['cancelledBy'] ?? 'unknown';
-    final message = cancelledBy == 'driver' 
-        ? 'Driver cancelled the trip. You can request a new ride.'
-        : 'Trip cancelled successfully.';
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.orange,
-        duration: Duration(seconds: 3),
-        action: cancelledBy == 'driver' ? SnackBarAction(
-          label: 'OK',
-          textColor: Colors.white,
-          onPressed: () {},
-        ) : null,
-      ),
-    );
-  });
-  _socketService.on('trip:clear_cache', (data) {
-    if (!mounted) return;
-    
-    debugPrint('🗑️ Clear cache signal received');
-    _clearActiveTripId();
-  });
 
-      // ✅ NEW: Listen for trip timeout (Requirement #3)
-  _socketService.on('trip:timeout', (data) {
-    if (!mounted) return;
-    
-    debugPrint('⏰ Trip timeout: $data');
-    
-    setState(() {
-      _isWaitingForDriver = false;
+    _socketService.on('trip:cancelled', (data) {
+      if (!mounted) return;
+
+      debugPrint('🚫 Trip cancelled: $data');
+
+      setState(() {
+        _isWaitingForDriver = false;
+        _currentTripId = null;
+      });
+
+      _rerequestTimer?.cancel();
+      _clearActiveTripId();
+
+      final cancelledBy = data['cancelledBy'] ?? 'unknown';
+      final message = cancelledBy == 'driver'
+          ? 'Driver cancelled the trip. You can request a new ride.'
+          : 'Trip cancelled successfully.';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message, style: const TextStyle(color: Colors.white)),
+          backgroundColor: AppColors.warning,
+          duration: const Duration(seconds: 3),
+        ),
+      );
     });
-    
-    _rerequestTimer?.cancel();
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(data['message'] ?? 'No drivers available. Please try again.'),
-        backgroundColor: Colors.orange,
-        duration: Duration(seconds: 5),
-      ),
-    );
-  });
-  } 
-  
-  
+
+    _socketService.on('trip:clear_cache', (data) {
+      if (!mounted) return;
+      debugPrint('🗑️ Clear cache signal received');
+      _clearActiveTripId();
+    });
+
+    _socketService.on('trip:timeout', (data) {
+      if (!mounted) return;
+
+      debugPrint('⏰ Trip timeout: $data');
+
+      setState(() {
+        _isWaitingForDriver = false;
+      });
+
+      _rerequestTimer?.cancel();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(data['message'] ?? 'No drivers available. Please try again.'),
+          backgroundColor: AppColors.warning,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    });
+  }
+
   Future<void> _loadBikeLiveIcon() async {
     try {
       final bitmap = await gmaps.BitmapDescriptor.fromAssetImage(
@@ -472,50 +459,48 @@ Future<void> _clearActiveTripId() async {
     }
   }
 
- Future<void> _fetchNearbyDrivers() async {
-  if (_pickupPoint == null) return;
-  
-  try {
-    // ✅ Get Firebase token
-    final token = await _getFirebaseToken();
-    if (token == null) {
-      debugPrint('No Firebase token available');
-      return;
-    }
+  Future<void> _fetchNearbyDrivers() async {
+    if (_pickupPoint == null) return;
 
-    final url = Uri.parse(
-      '$apiBase/api/driver/nearby?lat=${_pickupPoint!.latitude}&lng=${_pickupPoint!.longitude}&radius=2',
-    );
-    
-    // ✅ Add Authorization header
-    final response = await http.get(
-      url,
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-      },
-    );
-    
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      if (data is List) {
-        setState(() {
-          _onlineDrivers = data.map<gmaps.LatLng>((item) {
-            return gmaps.LatLng(item['lat'], item['lng']);
-          }).toList();
-        });
-        _updateMarkers();
+    try {
+      final token = await _getFirebaseToken();
+      if (token == null) {
+        debugPrint('No Firebase token available');
+        return;
       }
-    } else if (response.statusCode == 401) {
-      debugPrint('Authentication failed - token may be expired');
-      // Optionally refresh token and retry
-    } else {
-      debugPrint('Failed to fetch drivers: ${response.statusCode}');
+
+      final url = Uri.parse(
+        '$apiBase/api/driver/nearby?lat=${_pickupPoint!.latitude}&lng=${_pickupPoint!.longitude}&radius=2',
+      );
+
+      final response = await http.get(
+        url,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data is List) {
+          setState(() {
+            _onlineDrivers = data.map<gmaps.LatLng>((item) {
+              return gmaps.LatLng(item['lat'], item['lng']);
+            }).toList();
+          });
+          _updateMarkers();
+        }
+      } else if (response.statusCode == 401) {
+        debugPrint('Authentication failed - token may be expired');
+      } else {
+        debugPrint('Failed to fetch drivers: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('Error fetching nearby drivers: $e');
     }
-  } catch (e) {
-    debugPrint('Error fetching nearby drivers: $e');
   }
-}
+
   void _updateMarkers() {
     _markers.clear();
 
@@ -711,19 +696,18 @@ Future<void> _clearActiveTripId() async {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: AppColors.surface,
+        backgroundColor: AppColors.background,
         title: Text('Location Services Disabled', style: AppTextStyles.heading3),
         content: Text('Please enable location services to use this feature.',
             style: AppTextStyles.body2),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: AppColors.accent)),
+            child: Text('Cancel', style: TextStyle(color: AppColors.error)),
           ),
           TextButton(
             onPressed: () => Geolocator.openLocationSettings(),
-            child:
-                Text('Open Settings', style: TextStyle(color: AppColors.primary)),
+            child: Text('Open Settings', style: TextStyle(color: AppColors.primary)),
           ),
         ],
       ),
@@ -734,21 +718,19 @@ Future<void> _clearActiveTripId() async {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title:
-            Text('Location Permission Required', style: AppTextStyles.heading3),
+        backgroundColor: AppColors.background,
+        title: Text('Location Permission Required', style: AppTextStyles.heading3),
         content: Text(
             'This app needs location permission to find nearby rides.',
             style: AppTextStyles.body2),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: TextStyle(color: AppColors.accent)),
+            child: Text('Cancel', style: TextStyle(color: AppColors.error)),
           ),
           TextButton(
             onPressed: () => Geolocator.openAppSettings(),
-            child:
-                Text('Open Settings', style: TextStyle(color: AppColors.primary)),
+            child: Text('Open Settings', style: TextStyle(color: AppColors.primary)),
           ),
         ],
       ),
@@ -785,216 +767,191 @@ Future<void> _clearActiveTripId() async {
     await prefs.setStringList(historyKey, _history);
   }
 
- // Replace your _onPickupChanged method with this:
-Future<void> _onPickupChanged(String value) async {
-  debugPrint('🔍 Pickup changed: "$value"');
-  
-  // Don't clear the point immediately - let user type
-  if (value.trim().isEmpty) {
-    setState(() {
-      _pickupPoint = null;
-      _pickupAddress = '';
-      _suggestions = [];
-    });
-    return;
+  Future<void> _onPickupChanged(String value) async {
+    debugPrint('🔍 Pickup changed: "$value"');
+
+    if (value.trim().isEmpty) {
+      setState(() {
+        _pickupPoint = null;
+        _pickupAddress = '';
+        _suggestions = [];
+      });
+      return;
+    }
+
+    if (value.trim().length < 2) {
+      setState(() {
+        _suggestions = [];
+      });
+      return;
+    }
+
+    await _fetchSuggestions(value);
   }
 
-  // ✅ FIX: Don't return early for short input - just don't fetch yet
-  if (value.trim().length < 2) {
-    // Keep existing pickup point, just clear suggestions
-    setState(() {
-      _suggestions = [];
-    });
-    return;
-  }
+  Future<void> _fetchSuggestions(String query) async {
+    debugPrint('🔎 Fetching suggestions for: "$query"');
 
-  // ✅ FIX: Allow re-searching even if it matches current address
-  // This helps when user is editing or correcting the address
-  
-  // Fetch suggestions for pickup field
-  await _fetchSuggestions(value);
-}
- Future<void> _fetchSuggestions(String query) async {
-  debugPrint('🔎 Fetching suggestions for: "$query"');
-  
-  if (query.trim().length < 2) {
-    debugPrint('⚠️ Query too short, clearing suggestions');
-    setState(() => _suggestions = []);
-    return;
-  }
+    if (query.trim().length < 2) {
+      debugPrint('⚠️ Query too short, clearing suggestions');
+      setState(() => _suggestions = []);
+      return;
+    }
 
-  // ✅ FIX: Cancel previous debounce timer
-  if (_debounce?.isActive ?? false) {
-    debugPrint('⏸️ Canceling previous search');
-    _debounce!.cancel();
-  }
+    if (_debounce?.isActive ?? false) {
+      debugPrint('⏸️ Canceling previous search');
+      _debounce!.cancel();
+    }
 
-  // ✅ FIX: Use debounce for ALL fields (pickup and drop)
-  _debounce = Timer(const Duration(milliseconds: 300), () async {
-    try {
-      debugPrint('🌐 Making API call to Google Places...');
-      
-      final url = Uri.parse(
-        'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${Uri.encodeComponent(query)}'
-        '&key=$googleMapsApiKey'
-        '&location=${_pickupPoint?.latitude ?? 17.3850},${_pickupPoint?.longitude ?? 78.4867}'
-        '&radius=20000',
-      );
+    _debounce = Timer(const Duration(milliseconds: 300), () async {
+      try {
+        debugPrint('🌐 Making API call to Google Places...');
 
-      debugPrint('📡 URL: $url');
+        final url = Uri.parse(
+          'https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${Uri.encodeComponent(query)}'
+          '&key=$googleMapsApiKey'
+          '&location=${_pickupPoint?.latitude ?? 17.3850},${_pickupPoint?.longitude ?? 78.4867}'
+          '&radius=20000',
+        );
 
-      final response = await http.get(url).timeout(
-        const Duration(seconds: 10),
-        onTimeout: () {
-          debugPrint('⏱️ Request timeout');
-          throw TimeoutException('Request timeout');
-        },
-      );
+        final response = await http.get(url).timeout(
+          const Duration(seconds: 10),
+          onTimeout: () {
+            debugPrint('⏱️ Request timeout');
+            throw TimeoutException('Request timeout');
+          },
+        );
 
-      debugPrint('📥 Response status: ${response.statusCode}');
+        debugPrint('📥 Response status: ${response.statusCode}');
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        debugPrint('📦 Response data: $data');
-        
-        final status = data['status'];
-        if (status != 'OK' && status != 'ZERO_RESULTS') {
-          debugPrint('⚠️ API returned status: $status');
-          if (status == 'REQUEST_DENIED') {
-            debugPrint('❌ API key issue - check your Google Maps API key');
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+
+          final status = data['status'];
+          if (status != 'OK' && status != 'ZERO_RESULTS') {
+            debugPrint('⚠️ API returned status: $status');
           }
-        }
 
-        final predictions = data['predictions'] as List?;
+          final predictions = data['predictions'] as List?;
 
-        if (predictions == null || predictions.isEmpty) {
-          debugPrint('📭 No predictions returned');
-          setState(() => _suggestions = []);
-          return;
-        }
+          if (predictions == null || predictions.isEmpty) {
+            debugPrint('📭 No predictions returned');
+            setState(() => _suggestions = []);
+            return;
+          }
 
-        debugPrint('✅ Found ${predictions.length} predictions');
+          debugPrint('✅ Found ${predictions.length} predictions');
 
-        List<Map<String, dynamic>> hyderabad = [];
-        List<Map<String, dynamic>> telangana = [];
-        List<Map<String, dynamic>> india = [];
+          List<Map<String, dynamic>> hyderabad = [];
+          List<Map<String, dynamic>> telangana = [];
+          List<Map<String, dynamic>> india = [];
 
-        for (var prediction in predictions) {
-          final placeId = prediction['place_id'] as String;
-          final description = prediction['description'] as String;
-          
-          debugPrint('  - $description');
-          
-          String city = '';
-          String state = '';
-          String country = '';
+          for (var prediction in predictions) {
+            final placeId = prediction['place_id'] as String;
+            final description = prediction['description'] as String;
 
-          // ✅ FIX: Make details fetch optional - don't block on it
-          try {
-            final detailsUrl = Uri.parse(
-              'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$googleMapsApiKey&fields=address_components',
-            );
-            
-            final detailsResp = await http.get(detailsUrl).timeout(
-              const Duration(seconds: 3),
-            );
-            
-            if (detailsResp.statusCode == 200) {
-              final details = jsonDecode(detailsResp.body);
-              final result = details['result'];
-              if (result != null && result['address_components'] != null) {
-                for (var comp in result['address_components']) {
-                  final types = List<String>.from(comp['types']);
-                  if (types.contains('locality')) {
-                    city = comp['long_name'];
-                  }
-                  if (types.contains('administrative_area_level_1')) {
-                    state = comp['long_name'];
-                  }
-                  if (types.contains('country')) {
-                    country = comp['long_name'];
+            String city = '';
+            String state = '';
+            String country = '';
+
+            try {
+              final detailsUrl = Uri.parse(
+                'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$googleMapsApiKey&fields=address_components',
+              );
+
+              final detailsResp = await http.get(detailsUrl).timeout(
+                const Duration(seconds: 3),
+              );
+
+              if (detailsResp.statusCode == 200) {
+                final details = jsonDecode(detailsResp.body);
+                final result = details['result'];
+                if (result != null && result['address_components'] != null) {
+                  for (var comp in result['address_components']) {
+                    final types = List<String>.from(comp['types']);
+                    if (types.contains('locality')) {
+                      city = comp['long_name'];
+                    }
+                    if (types.contains('administrative_area_level_1')) {
+                      state = comp['long_name'];
+                    }
+                    if (types.contains('country')) {
+                      country = comp['long_name'];
+                    }
                   }
                 }
               }
+            } catch (e) {
+              debugPrint('⚠️ Failed to fetch details for $placeId: $e');
             }
-          } catch (e) {
-            debugPrint('⚠️ Failed to fetch details for $placeId: $e');
-            // Continue anyway - we have the basic description
+
+            final suggestion = {
+              'description': description,
+              'place_id': placeId,
+              'city': city,
+              'state': state,
+              'country': country,
+            };
+
+            if (city.toLowerCase() == 'hyderabad') {
+              hyderabad.add(suggestion);
+            } else if (state.toLowerCase() == 'telangana') {
+              telangana.add(suggestion);
+            } else if (country.toLowerCase() == 'india' || country.isEmpty) {
+              india.add(suggestion);
+            } else {
+              india.add(suggestion);
+            }
           }
 
-          final suggestion = {
-            'description': description,
-            'place_id': placeId,
-            'city': city,
-            'state': state,
-            'country': country,
-          };
+          final grouped = [
+            ...hyderabad,
+            ...telangana,
+            ...india,
+          ];
 
-          // Group by location
-          if (city.toLowerCase() == 'hyderabad') {
-            hyderabad.add(suggestion);
-          } else if (state.toLowerCase() == 'telangana') {
-            telangana.add(suggestion);
-          } else if (country.toLowerCase() == 'india' || country.isEmpty) {
-            india.add(suggestion);
-          } else {
-            india.add(suggestion);
+          if (mounted) {
+            setState(() {
+              _suggestions = grouped;
+            });
+          }
+        } else {
+          debugPrint('❌ HTTP Error: ${response.statusCode}');
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Search failed: ${response.statusCode}'),
+                backgroundColor: AppColors.warning,
+                duration: const Duration(seconds: 2),
+              ),
+            );
           }
         }
+      } catch (e) {
+        debugPrint('❌ Error fetching suggestions: $e');
 
-        final grouped = [
-          ...hyderabad,
-          ...telangana,
-          ...india,
-        ];
-        
-        debugPrint('✅ Setting ${grouped.length} suggestions');
-        
         if (mounted) {
           setState(() {
-            _suggestions = grouped;
+            _suggestions = _history
+                .where((item) => item.toLowerCase().contains(query.toLowerCase()))
+                .map((item) => {'description': item, 'place_id': ''})
+                .toList();
           });
-        }
-      } else {
-        debugPrint('❌ HTTP Error: ${response.statusCode}');
-        debugPrint('   Body: ${response.body}');
-        
-        // ✅ FIX: Show user-friendly error
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Search failed: ${response.statusCode}'),
-              backgroundColor: Colors.orange,
-              duration: const Duration(seconds: 2),
-            ),
-          );
+
+          if (_suggestions.isEmpty) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Unable to search. Check your internet connection.'),
+                backgroundColor: Colors.red,
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
         }
       }
-    } catch (e) {
-      debugPrint('❌ Error fetching suggestions: $e');
-      
-      // ✅ FIX: Fallback to history
-      if (mounted) {
-        setState(() {
-          _suggestions = _history
-              .where((item) => item.toLowerCase().contains(query.toLowerCase()))
-              .map((item) => {'description': item, 'place_id': ''})
-              .toList();
-        });
-        
-        if (_suggestions.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Unable to search. Check your internet connection.'),
-              backgroundColor: Colors.red,
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-      }
-    }
-  });
-}
+    });
+  }
 
   Future<void> _selectSuggestion(Map<String, dynamic> suggestion) async {
     final placeId = suggestion['place_id'] as String;
@@ -1239,410 +1196,293 @@ Future<void> _onPickupChanged(String value) async {
   }
 
   Future<void> _fetchFares() async {
-  // ✅ FIX 1: Check prerequisites with better logging
-  if (_distanceKm == null || _durationSec == null) {
-    debugPrint('⚠️ Cannot fetch fares: distanceKm=$_distanceKm, durationSec=$_durationSec');
-    return;
-  }
+    if (_distanceKm == null || _durationSec == null) {
+      debugPrint('⚠️ Cannot fetch fares: distanceKm=$_distanceKm, durationSec=$_durationSec');
+      return;
+    }
 
-  // ✅ FIX 2: Check location data
-  if (_pickupState.isEmpty || _pickupCity.isEmpty) {
-    debugPrint('⚠️ Missing location data: state=$_pickupState, city=$_pickupCity');
-    // Don't return - we'll use defaults
-  }
+    if (_pickupState.isEmpty || _pickupCity.isEmpty) {
+      debugPrint('⚠️ Missing location data: state=$_pickupState, city=$_pickupCity');
+    }
 
-  debugPrint('');
-  debugPrint('=' * 60);
-  debugPrint('💰 FETCHING FARES');
-  debugPrint('   Distance: ${_distanceKm!.toStringAsFixed(2)} km');
-  debugPrint('   Duration: ${(_durationSec! / 60).toStringAsFixed(1)} min');
-  debugPrint('   State: $_pickupState');
-  debugPrint('   City: $_pickupCity');
-  debugPrint('=' * 60);
+    setState(() {
+      _loadingFares = true;
+      _fares.clear();
+    });
 
-  setState(() {
-    _loadingFares = true;
-    _fares.clear();
-  });
+    final vehiclesToFetch = (widget.vehicleType != null &&
+            widget.vehicleType!.isNotEmpty)
+        ? [widget.vehicleType!]
+        : vehicleLabels.where((v) => v.isNotEmpty).toList();
 
-  final vehiclesToFetch = (widget.vehicleType != null &&
-          widget.vehicleType!.isNotEmpty)
-      ? [widget.vehicleType!]
-      : vehicleLabels.where((v) => v.isNotEmpty).toList();
+    try {
+      final results = await Future.wait(
+        vehiclesToFetch.map((vehicleType) async {
+          try {
+            final requestBody = {
+              'state': _pickupState,
+              'city': _pickupCity,
+              'vehicleType': vehicleType,
+              'category': 'short',
+              'distanceKm': _distanceKm,
+              'durationMin': _durationSec! / 60,
+            };
 
-  debugPrint('📋 Vehicles to fetch: $vehiclesToFetch');
+            final response = await http.post(
+              Uri.parse('$apiBase/api/fares/calc'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode(requestBody),
+            ).timeout(
+              const Duration(seconds: 5),
+              onTimeout: () {
+                throw TimeoutException('Fare calculation timeout');
+              },
+            );
 
-  try {
-    final results = await Future.wait(
-      vehiclesToFetch.map((vehicleType) async {
-        try {
-          debugPrint('🔍 Fetching fare for vehicleType="$vehicleType"...');
-
-          final requestBody = {
-            'state': _pickupState,
-            'city': _pickupCity,
-            'vehicleType': vehicleType,
-            'category': 'short',
-            'distanceKm': _distanceKm,
-            'durationMin': _durationSec! / 60,
-          };
-
-          debugPrint('📤 Request body: ${jsonEncode(requestBody)}');
-
-          final response = await http.post(
-            Uri.parse('$apiBase/api/fares/calc'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(requestBody),
-          ).timeout(
-            const Duration(seconds: 5),
-            onTimeout: () {
-              debugPrint('⏱️ Timeout for $vehicleType');
-              throw TimeoutException('Fare calculation timeout');
-            },
-          );
-
-          debugPrint('📥 Response for $vehicleType: ${response.statusCode}');
-
-          if (response.statusCode == 200) {
-            final data = jsonDecode(response.body);
-            debugPrint('📦 Response data: $data');
-            
-            final total = (data['total'] as num).toDouble();
-            debugPrint('✅ API fare for $vehicleType = ₹$total');
-            return MapEntry(vehicleType, total);
-          } else if (response.statusCode == 404) {
-            final defaultFare = _defaultFares[vehicleType] ?? 0.0;
-            debugPrint('⚠️ Rate not found for $vehicleType, using default: ₹$defaultFare');
-            return MapEntry(vehicleType, defaultFare);
-          } else {
-            debugPrint('❌ Failed response ${response.statusCode} for $vehicleType');
-            debugPrint('   Body: ${response.body}');
+            if (response.statusCode == 200) {
+              final data = jsonDecode(response.body);
+              final total = (data['total'] as num).toDouble();
+              return MapEntry(vehicleType, total);
+            } else {
+              final defaultFare = _defaultFares[vehicleType] ?? 0.0;
+              return MapEntry(vehicleType, defaultFare);
+            }
+          } catch (e) {
             final defaultFare = _defaultFares[vehicleType] ?? 0.0;
             return MapEntry(vehicleType, defaultFare);
           }
-        } on TimeoutException catch (e) {
-          debugPrint('⏱️ Timeout for $vehicleType: $e');
-          final defaultFare = _defaultFares[vehicleType] ?? 0.0;
-          return MapEntry(vehicleType, defaultFare);
-        } catch (e) {
-          debugPrint('❌ Error fetching fare for $vehicleType: $e');
-          final defaultFare = _defaultFares[vehicleType] ?? 0.0;
-          return MapEntry(vehicleType, defaultFare);
+        }),
+      );
+
+      setState(() {
+        for (var entry in results) {
+          _fares[entry.key] = entry.value;
         }
-      }),
-    );
+      });
 
-    // ✅ FIX 3: Always add fares, even if 0 (for better debugging)
-    setState(() {
-      for (var entry in results) {
-        _fares[entry.key] = entry.value;
-        debugPrint('   Added: ${entry.key} = ₹${entry.value}');
+      if (_fares.values.every((fare) => fare == 0)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Unable to calculate fares. Using estimates.'),
+              backgroundColor: Colors.orange,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
       }
-    });
 
-    debugPrint('');
-    debugPrint('💰 FINAL FARES LOADED:');
-    _fares.forEach((key, value) {
-      debugPrint('   $key: ₹$value');
-    });
-  debugPrint('=' * 60);
-    debugPrint('');
+      if (_fares.length == 1 && _selectedVehicle == null) {
+        setState(() {
+          _selectedVehicle = _fares.keys.first;
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ Unexpected error in _fetchFares: $e');
 
-    // ✅ FIX 4: Warn if all fares are 0
-    if (_fares.values.every((fare) => fare == 0)) {
-      debugPrint('⚠️ WARNING: All fares are 0! Check API or default fares.');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error calculating fares: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      setState(() => _loadingFares = false);
+    }
+  }
+
+  Future<void> _confirmRide() async {
+    await _clearActiveTripId();
+
+    if (_loadingFares) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Unable to calculate fares. Using estimates.'),
+            content: Text('Calculating fare, please wait...'),
             backgroundColor: Colors.orange,
-            duration: Duration(seconds: 2),
           ),
         );
       }
+      return;
     }
 
-    // ✅ FIX 5: Auto-select vehicle if only one option
-    if (_fares.length == 1 && _selectedVehicle == null) {
-      setState(() {
-        _selectedVehicle = _fares.keys.first;
-        debugPrint('🎯 Auto-selected vehicle: $_selectedVehicle');
-      });
+    if (widget.customerId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Customer ID is missing. Please log in again.')),
+        );
+      }
+      return;
     }
 
-  } catch (e) {
-    debugPrint('❌ Unexpected error in _fetchFares: $e');
-    debugPrint('Stack trace: ${StackTrace.current}');
-    
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error calculating fares: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+    if (_pickupPoint == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select a pickup location.')),
+        );
+      }
+      return;
     }
-  } finally {
-    setState(() => _loadingFares = false);
-    debugPrint('✅ _loadingFares set to false');
-  }
-}
 
-// Replace _confirmRide() with this:
-// Replace your existing _confirmRide() method with this fixed version:
-
-// Replace your existing _confirmRide() method with this fixed version:
-
-// Replace your existing _confirmRide() method with this fixed version:
-
-Future<void> _confirmRide() async {
-  // ✅ FIX: Use widget.customerId instead of Firebase user
-  // Since you're passing MongoDB _id from login, use that directly
-    await _clearActiveTripId();
-
-  // ✅ ADD DETAILED LOGGING
-  debugPrint('=' * 50);
-  debugPrint('🔍 CONFIRM RIDE - VALIDATION CHECK');
-  debugPrint('Customer ID: ${widget.customerId}');
-  debugPrint('Selected Vehicle: $_selectedVehicle');
-  debugPrint('Pickup Point: $_pickupPoint');
-  debugPrint('Drop Point: $_dropPoint');
-  debugPrint('Fares Map: $_fares');
-  debugPrint('Loading Fares: $_loadingFares');
-  debugPrint('=' * 50);
-  
-  // ✅ FIX 1: Check if still loading fares
-  if (_loadingFares) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Calculating fare, please wait...'),
-          backgroundColor: Colors.orange,
-        ),
-      );
+    if (_dropPoint == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select a drop location.')),
+        );
+      }
+      return;
     }
-    return;
-  }
-  
-  // ✅ FIX 2: More specific error messages - Check customerId instead
-  if (widget.customerId.isEmpty) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Customer ID is missing. Please log in again.')),
-      );
-    }
-    return;
-  }
-  
-  if (_pickupPoint == null) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a pickup location.')),
-      );
-    }
-    return;
-  }
-  
-  if (_dropPoint == null) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a drop location.')),
-      );
-    }
-    return;
-  }
-  
-  if (_selectedVehicle == null) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a vehicle type.')),
-      );
-    }
-    return;
-  }
 
-  final selected = _selectedVehicle!.toLowerCase().trim();
-  
-  // ✅ FIX 3: Better fare validation with fallback
-  final selectedFare = _fares[selected] ?? _defaultFares[selected] ?? 0.0;
+    if (_selectedVehicle == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select a vehicle type.')),
+        );
+      }
+      return;
+    }
 
-  debugPrint('💰 FARE CALCULATION:');
-  debugPrint('   Vehicle: $selected');
-  debugPrint('   API Fare: ${_fares[selected]}');
-  debugPrint('   Default Fare: ${_defaultFares[selected]}');
-  debugPrint('   Final Fare: ₹$selectedFare');
+    final selected = _selectedVehicle!.toLowerCase().trim();
+    final selectedFare = _fares[selected] ?? _defaultFares[selected] ?? 0.0;
 
-  if (selectedFare <= 0) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Unable to calculate fare. Please try again.'),
-          backgroundColor: Colors.red,
-          action: SnackBarAction(
-            label: 'Retry',
-            textColor: Colors.white,
-            onPressed: () async {
-              setState(() => _loadingFares = true);
-              await _fetchFares();
-            },
+    if (selectedFare <= 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Unable to calculate fare. Please try again.'),
+            backgroundColor: Colors.red,
+            action: SnackBarAction(
+              label: 'Retry',
+              textColor: Colors.white,
+              onPressed: () async {
+                setState(() => _loadingFares = true);
+                await _fetchFares();
+              },
+            ),
           ),
-        ),
-      );
+        );
+      }
+      return;
     }
-    return;
-  }
 
-  debugPrint("===========================================");
-  debugPrint("💰 FARE DETAILS:");
-  debugPrint("   Vehicle: $selected");
-  debugPrint("   API fare: ${_fares[selected]}");
-  debugPrint("   Default fare: ${_defaultFares[selected]}");
-  debugPrint("   Final fare: ₹$selectedFare");
-  debugPrint("   Source: ${_fares[selected] != null ? 'API (distance-based)' : 'DEFAULT (fallback)'}");
-  debugPrint("===========================================");
-
-  final rideData = {
-    "customerId": widget.customerId,
-    "pickup": {
-      "coordinates": [_pickupPoint!.longitude, _pickupPoint!.latitude],
-      "address": _pickupAddress,
-    },
-    "drop": {
-      "coordinates": [_dropPoint!.longitude, _dropPoint!.latitude],
-      "address": _dropAddress,
-    },
-    "vehicleType": selected,
-    "fare": selectedFare,
-    "timestamp": DateTime.now().toIso8601String(),
-  };
-
-  debugPrint("📤 Sending ride request: ${jsonEncode(rideData)}");
-
-  try {
-    // ✅ FIX 4: Add timeout to prevent hanging
-    final response = await http.post(
-      Uri.parse("$apiBase/api/trip/short"),
-      headers: {"Content-Type": "application/json"},
-      body: jsonEncode(rideData),
-    ).timeout(
-      const Duration(seconds: 10),
-      onTimeout: () {
-        throw TimeoutException('Request timed out');
+    final rideData = {
+      "customerId": widget.customerId,
+      "pickup": {
+        "coordinates": [_pickupPoint!.longitude, _pickupPoint!.latitude],
+        "address": _pickupAddress,
       },
-    );
+      "drop": {
+        "coordinates": [_dropPoint!.longitude, _dropPoint!.latitude],
+        "address": _dropAddress,
+      },
+      "vehicleType": selected,
+      "fare": selectedFare,
+      "timestamp": DateTime.now().toIso8601String(),
+    };
 
-    debugPrint('📥 Response Status: ${response.statusCode}');
-    debugPrint('📥 Response Body: ${response.body}');
+    try {
+      final response = await http.post(
+        Uri.parse("$apiBase/api/trip/short"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode(rideData),
+      ).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw TimeoutException('Request timed out');
+        },
+      );
 
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      debugPrint("✅ Trip created: $data");
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
 
-      if (data['tripId'] != null) {
-        setState(() {
-          _currentTripId = data['tripId'];
-          _isWaitingForDriver = data['drivers'] > 0;
-        });
-
-        if (_isWaitingForDriver) {
-          _rerequestTimer?.cancel();
-          _rerequestTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
-            if (!mounted) {
-              timer.cancel();
-              return;
-            }
-            debugPrint("Re-requesting trip: $_currentTripId");
-            _socketService.emit('trip:rerequest', {'tripId': _currentTripId});
+        if (data['tripId'] != null) {
+          setState(() {
+            _currentTripId = data['tripId'];
+            _isWaitingForDriver = data['drivers'] > 0;
           });
+
+          if (_isWaitingForDriver) {
+            _rerequestTimer?.cancel();
+            _rerequestTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+              if (!mounted) {
+                timer.cancel();
+                return;
+              }
+              _socketService.emit('trip:rerequest', {'tripId': _currentTripId});
+            });
+          }
+        }
+
+        await _saveToHistory(_dropAddress);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(_isWaitingForDriver
+                  ? 'Searching for nearby drivers...'
+                  : 'No drivers available right now.'),
+              backgroundColor: _isWaitingForDriver ? AppColors.success : AppColors.warning,
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Ride request failed: ${response.body}'),
+              backgroundColor: Colors.red,
+            ),
+          );
         }
       }
-
-      await _saveToHistory(_dropAddress);
-
+    } on TimeoutException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_isWaitingForDriver
-                ? 'Searching for nearby drivers...'
-                : 'No drivers available right now.'),
-            backgroundColor: _isWaitingForDriver ? Colors.green : Colors.orange,
+          const SnackBar(
+            content: Text('Request timed out. Please check your connection.'),
+            backgroundColor: Colors.red,
           ),
         );
       }
-    } else {
-      debugPrint("❌ Trip API failed: ${response.statusCode} ${response.body}");
+    } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Ride request failed: ${response.body}'),
+            content: Text('Failed to send ride request: $e'),
             backgroundColor: Colors.red,
           ),
         );
       }
     }
-  } on TimeoutException catch (e) {
-    debugPrint("❌ Request timeout: $e");
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Request timed out. Please check your connection.'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  } catch (e) {
-    debugPrint("❌ Error calling trip API: $e");
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to send ride request: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
   }
-}
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
-      body: Stack(
-        children: [
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFF0A0A0F),
-                  Color(0xFF1A1A24),
-                  Color(0xFF0A0A0F),
-                ],
-                stops: [0.0, 0.5, 1.0],
-              ),
-            ),
-          ),
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 500),
-            transitionBuilder: (Widget child, Animation<double> animation) {
-              return SlideTransition(
-                position: Tween<Offset>(
-                  begin: const Offset(1.0, 0.0),
-                  end: Offset.zero,
-                ).animate(CurvedAnimation(
-                  parent: animation,
-                  curve: Curves.easeOutCubic,
-                )),
-                child: FadeTransition(opacity: animation, child: child),
-              );
-            },
-            child: _screenIndex == 0
-                ? _buildEnhancedSearchScreen()
-                : _buildEnhancedMapScreen(),
-          ),
-          if (_isWaitingForDriver) _buildEnhancedWaitingOverlay(),
-        ],
+      backgroundColor: AppColors.background, // White background
+      body: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 500),
+        transitionBuilder: (Widget child, Animation<double> animation) {
+          return SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(1.0, 0.0),
+              end: Offset.zero,
+            ).animate(CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
+            )),
+            child: FadeTransition(opacity: animation, child: child),
+          );
+        },
+        child: _screenIndex == 0
+            ? _buildEnhancedSearchScreen()
+            : _buildEnhancedMapScreen(),
       ),
+      // Overlay waiting dialog
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
+      floatingActionButton: _isWaitingForDriver ? _buildWaitingOverlay() : null,
     );
   }
 
@@ -1689,27 +1529,41 @@ Future<void> _confirmRide() async {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          "Good ${_getTimeGreeting()}!",
-          style: AppTextStyles.body2.copyWith(
-            color: AppColors.onSurfaceTertiary,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          "Where are you going?",
-          style: AppTextStyles.heading1.copyWith(fontSize: 28),
-        ),
-        const SizedBox(height: 8),
-        Container(
-          height: 3,
-          width: 50,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [AppColors.primary, AppColors.accent],
+        Row(
+          children: [
+            GestureDetector(
+              onTap: () {
+                HapticFeedback.selectionClick();
+                Navigator.pop(context);
+              },
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.divider),
+                ),
+                child: const Icon(Icons.arrow_back, color: AppColors.onSurface, size: 20),
+              ),
             ),
-            borderRadius: BorderRadius.circular(2),
-          ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Good ${_getTimeGreeting()}!",
+                    style: AppTextStyles.body2,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    "Where are you going?",
+                    style: AppTextStyles.heading2,
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -1751,20 +1605,17 @@ Future<void> _confirmRide() async {
                   setState(() => _history.clear());
                 },
                 child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
                     color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                        color: AppColors.accent.withOpacity(0.3)),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.error.withOpacity(0.3)),
                   ),
                   child: Text(
                     "Clear all",
                     style: AppTextStyles.caption.copyWith(
-                      color: AppColors.accent,
+                      color: AppColors.error,
                       fontWeight: FontWeight.w600,
-                      fontSize: 11,
                     ),
                   ),
                 ),
@@ -1794,13 +1645,7 @@ Future<void> _confirmRide() async {
             decoration: BoxDecoration(
               color: AppColors.surface,
               shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.primary.withOpacity(0.2),
-                  blurRadius: 20,
-                  spreadRadius: 5,
-                ),
-              ],
+              border: Border.all(color: AppColors.divider),
             ),
             child: const Icon(
               Icons.explore_outlined,
@@ -1856,7 +1701,7 @@ Future<void> _confirmRide() async {
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.3),
+                color: Colors.black.withOpacity(0.1),
                 blurRadius: 20,
                 offset: const Offset(0, 10),
               ),
@@ -1904,21 +1749,14 @@ Future<void> _confirmRide() async {
           builder: (context, scrollController) {
             return Container(
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Color(0xFF1A1A24),
-                    Color(0xFF0A0A0F),
-                  ],
-                ),
+                color: AppColors.background,
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(32),
                   topRight: Radius.circular(32),
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.5),
+                    color: Colors.black.withOpacity(0.1),
                     blurRadius: 30,
                     offset: const Offset(0, -10),
                   ),
@@ -1931,7 +1769,7 @@ Future<void> _confirmRide() async {
                     height: 4,
                     width: 40,
                     decoration: BoxDecoration(
-                      color: AppColors.onSurfaceTertiary,
+                      color: AppColors.divider,
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -1976,109 +1814,66 @@ Future<void> _confirmRide() async {
     );
   }
 
-  Widget _buildEnhancedWaitingOverlay() {
-    return Positioned.fill(
-      child: Stack(
+  Widget _buildWaitingOverlay() {
+    return Container(
+      margin: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppColors.divider, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withOpacity(0.2),
+            blurRadius: 30,
+            spreadRadius: 5,
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           AnimatedBuilder(
             animation: _pulseAnimation,
             builder: (context, child) {
-              return BackdropFilter(
-                filter: ImageFilter.blur(
-                  sigmaX: 20 * _pulseAnimation.value,
-                  sigmaY: 20 * _pulseAnimation.value,
-                ),
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        AppColors.background.withOpacity(0.7),
-                        AppColors.surface.withOpacity(0.8),
-                        AppColors.background.withOpacity(0.9),
-                      ],
-                    ),
+              return Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppColors.primary.withOpacity(0.1),
+                  border: Border.all(
+                    color: AppColors.primary.withOpacity(_pulseAnimation.value * 0.5),
+                    width: 3,
                   ),
+                ),
+                child: const Icon(
+                  Icons.search,
+                  size: 40,
+                  color: AppColors.primary,
                 ),
               );
             },
           ),
-          Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                AnimatedBuilder(
-                  animation: _pulseAnimation,
-                  builder: (context, child) {
-                    return Container(
-                      width: 200,
-                      height: 200,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: RadialGradient(
-                          colors: [
-                            AppColors.primary.withOpacity(0.8),
-                            AppColors.accent.withOpacity(0.6),
-                            Colors.transparent,
-                          ],
-                          stops: const [0.0, 0.7, 1.0],
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.primary
-                                .withOpacity(0.5 * _pulseAnimation.value),
-                            blurRadius: 60 * _pulseAnimation.value,
-                            spreadRadius: 20 * _pulseAnimation.value,
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Container(
-                          width: 100,
-                          height: 100,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: AppColors.surface,
-                            border: Border.all(
-                              color: AppColors.primary,
-                              width: 3,
-                            ),
-                          ),
-                          child: const Icon(
-                            Icons.search,
-                            size: 50,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                const SizedBox(height: 40),
-                Text(
-                  'Searching for drivers nearby...',
-                  style: AppTextStyles.heading2.copyWith(
-                    color: AppColors.onSurface,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'This usually takes less than 30 seconds',
-                  style: AppTextStyles.body2,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 60),
-                _EnhancedCancelButton(
-                  onPressed: () {
-                    HapticFeedback.mediumImpact();
-                    setState(() => _isWaitingForDriver = false);
-                    _rerequestTimer?.cancel();
-                  },
-                ),
-              ],
-            ),
+          const SizedBox(height: 24),
+          Text(
+            'Searching for drivers nearby...',
+            style: AppTextStyles.heading3,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'This usually takes less than 30 seconds',
+            style: AppTextStyles.body2,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 32),
+          _EnhancedCancelButton(
+            onPressed: () {
+              HapticFeedback.mediumImpact();
+              setState(() => _isWaitingForDriver = false);
+              _rerequestTimer?.cancel();
+            },
           ),
         ],
       ),
@@ -2106,7 +1901,7 @@ Future<void> _confirmRide() async {
   }
 }
 
-// Enhanced UI Components
+// --- ENHANCED UI COMPONENTS (Updated for Light Theme) ---
 
 class _EnhancedLocationInputBar extends StatelessWidget {
   final TextEditingController pickupController;
@@ -2135,24 +1930,17 @@ class _EnhancedLocationInputBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Color(0xFF2A2A38),
-            Color(0xFF1A1A24),
-          ],
-        ),
+        color: AppColors.surface, // Light gray background
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: AppColors.primary.withOpacity(0.2),
+          color: AppColors.divider,
           width: 1,
         ),
         boxShadow: [
           BoxShadow(
             color: AppColors.primary.withOpacity(0.1),
-            blurRadius: 20,
-            spreadRadius: 2,
+            blurRadius: 15,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
@@ -2180,10 +1968,9 @@ class _EnhancedLocationInputBar extends StatelessWidget {
                   margin: const EdgeInsets.symmetric(horizontal: 8),
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
-                    color: AppColors.surface,
+                    color: AppColors.background,
                     shape: BoxShape.circle,
-                    border:
-                        Border.all(color: AppColors.primary.withOpacity(0.3)),
+                    border: Border.all(color: AppColors.primary.withOpacity(0.3)),
                   ),
                   child: const Icon(
                     Icons.swap_vert,
@@ -2239,7 +2026,7 @@ class _EnhancedLocationInputBar extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: iconColor.withOpacity(0.15),
+                color: iconColor.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: iconColor.withOpacity(0.3),
@@ -2254,26 +2041,23 @@ class _EnhancedLocationInputBar extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child:TextField(
-  controller: controller,
-  focusNode: focusNode,
-  style: AppTextStyles.body1.copyWith(fontSize: 15),
-  decoration: InputDecoration(
-    hintText: hintText,
-    hintStyle: AppTextStyles.body1.copyWith(
-      color: AppColors.onSurfaceTertiary,
-      fontSize: 15,
-    ),
-    border: InputBorder.none,
-    suffixIcon: suffixWidget,
-    isDense: true,
-    contentPadding: EdgeInsets.zero,
-  ),
-  onChanged: (value) {
-    debugPrint('🔤 TextField changed: "$value" (${label})');
-    onChanged(value);
-  },
-)
+              child: TextField(
+                controller: controller,
+                focusNode: focusNode,
+                style: AppTextStyles.body1.copyWith(fontSize: 15),
+                decoration: InputDecoration(
+                  hintText: hintText,
+                  hintStyle: AppTextStyles.body1.copyWith(
+                    color: AppColors.onSurfaceTertiary,
+                    fontSize: 15,
+                  ),
+                  border: InputBorder.none,
+                  suffixIcon: suffixWidget,
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                onChanged: onChanged,
+              ),
             ),
           ],
         ),
@@ -2291,29 +2075,27 @@ class _EnhancedLocationInputBar extends StatelessWidget {
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
               color: isListening
-                  ? AppColors.accent.withOpacity(0.2)
-                  : AppColors.surface,
+                  ? AppColors.primary.withOpacity(0.1)
+                  : AppColors.background,
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
-                color: isListening
-                    ? AppColors.accent
-                    : AppColors.primary.withOpacity(0.3),
+                color: isListening ? AppColors.primary : AppColors.divider,
                 width: isListening ? 2 : 1,
               ),
               boxShadow: isListening
                   ? [
                       BoxShadow(
-                        color: AppColors.accent
-                            .withOpacity(0.5 * pulseAnimation.value),
-                        blurRadius: 20 * pulseAnimation.value,
-                        spreadRadius: 5 * pulseAnimation.value,
+                        color: AppColors.primary
+                            .withOpacity(0.3 * pulseAnimation.value),
+                        blurRadius: 15 * pulseAnimation.value,
+                        spreadRadius: 3 * pulseAnimation.value,
                       ),
                     ]
                   : null,
             ),
             child: Icon(
               isListening ? Icons.mic : Icons.mic_none,
-              color: isListening ? AppColors.accent : AppColors.primary,
+              color: isListening ? AppColors.primary : AppColors.onSurfaceSecondary,
               size: 18,
             ),
           ),
@@ -2336,7 +2118,7 @@ class _EnhancedHistoryList extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListView.separated(
       itemCount: history.length,
-      separatorBuilder: (context, index) => const SizedBox(height: 10),
+      separatorBuilder: (context, index) => const SizedBox(height: 12),
       itemBuilder: (context, index) {
         final item = history[index];
         return TweenAnimationBuilder<double>(
@@ -2388,7 +2170,7 @@ class _EnhancedSuggestionCard extends StatelessWidget {
           child: Opacity(
             opacity: value,
             child: Container(
-              margin: const EdgeInsets.only(bottom: 10),
+              margin: const EdgeInsets.only(bottom: 12),
               child: _EnhancedLocationCard(
                 title: suggestion['description'],
                 subtitle: _getLocationSubtitle(suggestion),
@@ -2445,24 +2227,17 @@ class _EnhancedLocationCard extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Color(0xFF2A2A38),
-                Color(0xFF1A1A24),
-              ],
-            ),
+            color: AppColors.background, // White
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: AppColors.primary.withOpacity(0.1),
+              color: AppColors.divider,
               width: 1,
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.1),
+                color: Colors.black.withOpacity(0.05),
                 blurRadius: 8,
-                offset: const Offset(0, 4),
+                offset: const Offset(0, 2),
               ),
             ],
           ),
@@ -2471,7 +2246,7 @@ class _EnhancedLocationCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: iconColor.withOpacity(0.15),
+                  color: iconColor.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
                     color: iconColor.withOpacity(0.3),
@@ -2574,9 +2349,7 @@ class _EnhancedFarePanel extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: AppColors.surface,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: AppColors.primary.withOpacity(0.2),
-                    ),
+                    border: Border.all(color: AppColors.divider),
                   ),
                   child: const Icon(
                     Icons.arrow_back,
@@ -2695,40 +2468,27 @@ class _EnhancedFareCard extends StatelessWidget {
           duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            gradient: selected
-                ? LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      AppColors.primary.withOpacity(0.2),
-                      AppColors.accent.withOpacity(0.1),
-                    ],
-                  )
-                : const LinearGradient(
-                    colors: [
-                      Color(0xFF2A2A38),
-                      Color(0xFF1A1A24),
-                    ],
-                  ),
+            color: selected
+                ? AppColors.serviceCardBg // Light cream
+                : AppColors.background, // White
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color:
-                  selected ? AppColors.primary : AppColors.primary.withOpacity(0.1),
+              color: selected ? AppColors.primary : AppColors.divider,
               width: selected ? 2 : 1,
             ),
             boxShadow: selected
                 ? [
                     BoxShadow(
-                      color: AppColors.primary.withOpacity(0.3),
-                      blurRadius: 20,
-                      spreadRadius: 2,
+                      color: AppColors.primary.withOpacity(0.25),
+                      blurRadius: 15,
+                      offset: const Offset(0, 4),
                     ),
                   ]
                 : [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 10,
-                      offset: const Offset(0, 5),
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
                     ),
                   ],
           ),
@@ -2738,13 +2498,11 @@ class _EnhancedFareCard extends StatelessWidget {
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: selected
-                      ? AppColors.primary.withOpacity(0.2)
+                      ? AppColors.primary.withOpacity(0.1)
                       : AppColors.surface,
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
-                    color: selected
-                        ? AppColors.primary
-                        : AppColors.primary.withOpacity(0.2),
+                    color: selected ? AppColors.primary : AppColors.divider,
                   ),
                 ),
                 child: vehicleIcon != null
@@ -2803,7 +2561,7 @@ class _EnhancedFareCard extends StatelessWidget {
                       vehicleInfo['description']!,
                       style: AppTextStyles.body2.copyWith(
                         color: selected
-                            ? AppColors.primary.withOpacity(0.8)
+                            ? AppColors.primary
                             : AppColors.onSurfaceSecondary,
                       ),
                     ),
@@ -2857,7 +2615,7 @@ class _EnhancedFareCard extends StatelessWidget {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: AppColors.success.withOpacity(0.2),
+                        color: AppColors.success.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
                           color: AppColors.success.withOpacity(0.5),
@@ -2949,12 +2707,10 @@ class _EnhancedBookButton extends StatelessWidget {
               }
             : null,
         style: ElevatedButton.styleFrom(
-          backgroundColor:
-              isEnabled ? AppColors.primary : AppColors.surface,
-          foregroundColor:
-              isEnabled ? Colors.white : AppColors.onSurfaceTertiary,
+          backgroundColor: isEnabled ? AppColors.primary : AppColors.surface,
+          foregroundColor: isEnabled ? AppColors.onPrimary : AppColors.onSurfaceTertiary,
           elevation: isEnabled ? 8 : 0,
-          shadowColor: isEnabled ? AppColors.primary.withOpacity(0.5) : null,
+          shadowColor: isEnabled ? AppColors.primary.withOpacity(0.3) : null,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(30),
           ),
@@ -2965,7 +2721,7 @@ class _EnhancedBookButton extends StatelessWidget {
             if (isEnabled) ...[
               const Icon(
                 Icons.rocket_launch,
-                color: Colors.white,
+                color: AppColors.onPrimary,
                 size: 24,
               ),
               const SizedBox(width: 12),
@@ -2975,7 +2731,7 @@ class _EnhancedBookButton extends StatelessWidget {
                   ? 'Book ${_capitalize(selectedVehicle!)} Now'
                   : 'Select a vehicle',
               style: AppTextStyles.button.copyWith(
-                color: isEnabled ? Colors.white : AppColors.onSurfaceTertiary,
+                color: isEnabled ? AppColors.onPrimary : AppColors.onSurfaceTertiary,
                 fontSize: 18,
               ),
             ),
@@ -2983,7 +2739,7 @@ class _EnhancedBookButton extends StatelessWidget {
               const SizedBox(width: 12),
               const Icon(
                 Icons.arrow_forward,
-                color: Colors.white,
+                color: AppColors.onPrimary,
                 size: 24,
               ),
             ],
@@ -3006,58 +2762,30 @@ class _EnhancedCancelButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 280,
-      height: 56,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(
-          color: AppColors.error.withOpacity(0.5),
-          width: 2,
+    return SizedBox(
+      width: 200,
+      height: 50,
+      child: OutlinedButton(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.error,
+          side: BorderSide(color: AppColors.error, width: 2),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(25),
+          ),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.error.withOpacity(0.2),
-            blurRadius: 20,
-            spreadRadius: 2,
-          ),
-        ],
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(28),
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  AppColors.error.withOpacity(0.1),
-                  AppColors.error.withOpacity(0.05),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(28),
-            ),
-            child: Center(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.close,
-                    color: AppColors.error,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Cancel Search',
-                    style: AppTextStyles.button.copyWith(
-                      color: AppColors.error,
-                    ),
-                  ),
-                ],
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.close, size: 20),
+            const SizedBox(width: 8),
+            Text(
+              'Cancel Search',
+              style: AppTextStyles.button.copyWith(
+                color: AppColors.error,
               ),
             ),
-          ),
+          ],
         ),
       ),
     );

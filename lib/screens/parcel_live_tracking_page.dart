@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 //import 'package:geolocator/geolocator.dart';
 
 /* ─── config ─── */
-const _BASE = 'https://e4784d33af60.ngrok-free.app';
+const _BASE = 'https://7668d252ef1d.ngrok-free.app';
 
 class ParcelLiveTrackingPage extends StatefulWidget {
   final String customerId;

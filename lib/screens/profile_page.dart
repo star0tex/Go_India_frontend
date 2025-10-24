@@ -57,7 +57,7 @@ class _ProfilePageState extends State<ProfilePage> {
     try {
       setState(() => _isLoading = true);
 
-      final url = Uri.parse('https://e4784d33af60.ngrok-free.app/api/user/id/$customerId');
+      final url = Uri.parse('https://7668d252ef1d.ngrok-free.app/api/user/id/$customerId');
       final res = await http.get(url);
 
       if (res.statusCode == 200) {
@@ -99,7 +99,7 @@ class _ProfilePageState extends State<ProfilePage> {
     }
 
     try {
-      final url = Uri.parse('https://e4784d33af60.ngrok-free.app/api/user/$phone');
+      final url = Uri.parse('https://7668d252ef1d.ngrok-free.app/api/user/$phone');
       final res = await http.put(
         url,
         headers: {'Content-Type': 'application/json'},

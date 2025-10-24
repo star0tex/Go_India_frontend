@@ -32,8 +32,8 @@ dependencies:
     sdk: flutter
   http: ^1.0.0
   lottie: ^3.3.1
-  firebase_core: ^3.15.1
-  firebase_auth: ^5.6.2
+  firebase_core: ^4.2.0
+  firebase_auth: ^6.1.1
   flutter_map: ^8.1.1
   latlong2: ^0.9.0
   google_maps_webservice: ^0.0.20-nullsafety.5
@@ -53,19 +53,26 @@ dependencies:
   location: ^8.0.1
   sliding_up_panel: ^2.0.0+1
   jwt_decoder: ^2.0.1
-  flutter_dotenv: ^5.1.0
+  flutter_dotenv: ^6.0.0
   google_place: ^0.4.7
   shared_preferences: ^2.2.2
-  fluttertoast: ^8.2.4
+  fluttertoast: ^9.0.0
   another_flushbar: ^1.10.29
-  geocoding: ^2.1.0
+  geocoding: ^4.0.0
   socket_io_client: ^3.1.2
 
+  # 🔔 Firebase Messaging (for push notifications)
+  firebase_messaging: ^16.0.3
+
+  # 👤 Firebase Auth (you already use this)
+
+  # Optional, if you use local notifications for custom UI
+
  # flutter_sms: ^2.3.3
-  flutter_local_notifications: ^17.0.0
+  flutter_local_notifications: ^19.5.0
 
   #geolocator: ^11.0.0  # (Use latest version if different)
-  permission_handler: ^11.0.0
+  permission_handler: ^12.0.1
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
@@ -77,7 +84,7 @@ dependency_overrides:
   http: ^1.0.0
 
 dev_dependencies:
-  flutter_launcher_icons: ^0.13.1
+  flutter_launcher_icons: ^0.14.4
 
   flutter_test:
     sdk: flutter

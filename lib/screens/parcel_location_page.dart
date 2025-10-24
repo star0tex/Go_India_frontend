@@ -924,7 +924,7 @@ class _ParcelLocationPageState extends State<ParcelLocationPage>
 
   void _setupSocketListeners() {
     final socketService = SocketService();
-    socketService.connect("https://e4784d33af60.ngrok-free.app");
+    socketService.connect("https://7668d252ef1d.ngrok-free.app");
     socketService.connectCustomer(customerId: widget.customerId);
 
     socketService.on('trip:accepted', (data) {
@@ -1033,7 +1033,7 @@ class _ParcelLocationPageState extends State<ParcelLocationPage>
         "category": "parcel",
       };
 
-      final url = Uri.parse("https://e4784d33af60.ngrok-free.app/api/parcels/estimate");
+      final url = Uri.parse("https://7668d252ef1d.ngrok-free.app/api/parcels/estimate");
 
       final res = await http.post(
         url,
@@ -1068,7 +1068,7 @@ class _ParcelLocationPageState extends State<ParcelLocationPage>
     setState(() => _isSubmitting = true);
 
     try {
-      final url = Uri.parse("https://e4784d33af60.ngrok-free.app/api/trip/parcel");
+      final url = Uri.parse("https://7668d252ef1d.ngrok-free.app/api/trip/parcel");
       
       final distanceMeters = Geolocator.distanceBetween(
         _currentPosition!.latitude,
