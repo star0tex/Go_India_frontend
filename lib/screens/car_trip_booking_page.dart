@@ -37,7 +37,7 @@ class _CarTripBookingPageState extends State<LongTripPage> {
   bool _routing = false;
   bool _loadingFare = false;
 
-  final String apiBase = 'https://7668d252ef1d.ngrok-free.app';
+  final String apiBase = 'https://b23b44ae0c5e.ngrok-free.app';
   late io.Socket _socket;
 
   @override

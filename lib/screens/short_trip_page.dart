@@ -16,7 +16,7 @@ import 'models/trip_args.dart';
 import 'driver_en_route_page.dart';
 
 const String googleMapsApiKey = 'AIzaSyB7VstS4RZlou2jyNgzkKePGqNbs2MyzYY';
-const String apiBase = 'https://7668d252ef1d.ngrok-free.app';
+const String apiBase = 'https://b23b44ae0c5e.ngrok-free.app';
 
 const Map<String, String> vehicleAssets = {
   'bike': 'assets/images/bike.png',
@@ -1196,102 +1196,121 @@ class _ShortTripPageState extends State<ShortTripPage>
   }
 
   Future<void> _fetchFares() async {
-    if (_distanceKm == null || _durationSec == null) {
-      debugPrint('⚠️ Cannot fetch fares: distanceKm=$_distanceKm, durationSec=$_durationSec');
-      return;
-    }
+  if (_distanceKm == null || _durationSec == null) {
+    debugPrint('⚠️ Cannot fetch fares: distanceKm=$_distanceKm, durationSec=$_durationSec');
+    return;
+  }
 
-    if (_pickupState.isEmpty || _pickupCity.isEmpty) {
-      debugPrint('⚠️ Missing location data: state=$_pickupState, city=$_pickupCity');
-    }
+  if (_pickupState.isEmpty || _pickupCity.isEmpty) {
+    debugPrint('⚠️ Missing location data: state=$_pickupState, city=$_pickupCity');
+  }
 
-    setState(() {
-      _loadingFares = true;
-      _fares.clear();
-    });
+  setState(() {
+    _loadingFares = true;
+    _fares.clear();
+  });
 
-    final vehiclesToFetch = (widget.vehicleType != null &&
-            widget.vehicleType!.isNotEmpty)
-        ? [widget.vehicleType!]
-        : vehicleLabels.where((v) => v.isNotEmpty).toList();
+  // ✅ CRITICAL FIX: Check widget.args.showAllFares instead of widget.vehicleType
+  final bool shouldShowAll = widget.args.showAllFares ?? true;
+  
+  List<String> vehiclesToFetch;
+  
+  if (shouldShowAll) {
+    // Show all vehicles (from search bar)
+    vehiclesToFetch = vehicleLabels.where((v) => v.isNotEmpty).toList();
+  } else if (widget.vehicleType != null && widget.vehicleType!.isNotEmpty) {
+    // Show only selected vehicle (from vehicle button)
+    vehiclesToFetch = [widget.vehicleType!];
+  } else if (_selectedVehicle != null) {
+    // Fallback to selected vehicle
+    vehiclesToFetch = [_selectedVehicle!];
+  } else {
+    // Default to all
+    vehiclesToFetch = vehicleLabels.where((v) => v.isNotEmpty).toList();
+  }
 
-    try {
-      final results = await Future.wait(
-        vehiclesToFetch.map((vehicleType) async {
-          try {
-            final requestBody = {
-              'state': _pickupState,
-              'city': _pickupCity,
-              'vehicleType': vehicleType,
-              'category': 'short',
-              'distanceKm': _distanceKm,
-              'durationMin': _durationSec! / 60,
-            };
+  debugPrint('🚗 Fetching fares for: $vehiclesToFetch (showAll: $shouldShowAll)');
 
-            final response = await http.post(
-              Uri.parse('$apiBase/api/fares/calc'),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode(requestBody),
-            ).timeout(
-              const Duration(seconds: 5),
-              onTimeout: () {
-                throw TimeoutException('Fare calculation timeout');
-              },
-            );
+  try {
+    final results = await Future.wait(
+      vehiclesToFetch.map((vehicleType) async {
+        try {
+          final requestBody = {
+            'state': _pickupState,
+            'city': _pickupCity,
+            'vehicleType': vehicleType,
+            'category': 'short',
+            'distanceKm': _distanceKm,
+            'durationMin': _durationSec! / 60,
+          };
 
-            if (response.statusCode == 200) {
-              final data = jsonDecode(response.body);
-              final total = (data['total'] as num).toDouble();
-              return MapEntry(vehicleType, total);
-            } else {
-              final defaultFare = _defaultFares[vehicleType] ?? 0.0;
-              return MapEntry(vehicleType, defaultFare);
-            }
-          } catch (e) {
+          final response = await http.post(
+            Uri.parse('$apiBase/api/fares/calc'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(requestBody),
+          ).timeout(
+            const Duration(seconds: 5),
+            onTimeout: () {
+              throw TimeoutException('Fare calculation timeout');
+            },
+          );
+
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            final total = (data['total'] as num).toDouble();
+            return MapEntry(vehicleType, total);
+          } else {
             final defaultFare = _defaultFares[vehicleType] ?? 0.0;
             return MapEntry(vehicleType, defaultFare);
           }
-        }),
-      );
-
-      setState(() {
-        for (var entry in results) {
-          _fares[entry.key] = entry.value;
+        } catch (e) {
+          final defaultFare = _defaultFares[vehicleType] ?? 0.0;
+          return MapEntry(vehicleType, defaultFare);
         }
-      });
+      }),
+    );
 
-      if (_fares.values.every((fare) => fare == 0)) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Unable to calculate fares. Using estimates.'),
-              backgroundColor: Colors.orange,
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
+    setState(() {
+      for (var entry in results) {
+        _fares[entry.key] = entry.value;
       }
+    });
 
-      if (_fares.length == 1 && _selectedVehicle == null) {
-        setState(() {
-          _selectedVehicle = _fares.keys.first;
-        });
-      }
-    } catch (e) {
-      debugPrint('❌ Unexpected error in _fetchFares: $e');
-
+    if (_fares.values.every((fare) => fare == 0)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error calculating fares: $e'),
-            backgroundColor: Colors.red,
+          const SnackBar(
+            content: Text('Unable to calculate fares. Using estimates.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 2),
           ),
         );
       }
-    } finally {
-      setState(() => _loadingFares = false);
     }
+
+    // Auto-select the vehicle if only one is fetched
+    if (_fares.length == 1 && _selectedVehicle == null) {
+      setState(() {
+        _selectedVehicle = _fares.keys.first;
+      });
+    }
+    
+    debugPrint('✅ Fetched fares: $_fares');
+  } catch (e) {
+    debugPrint('❌ Unexpected error in _fetchFares: $e');
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error calculating fares: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  } finally {
+    setState(() => _loadingFares = false);
   }
+}
 
   Future<void> _confirmRide() async {
     await _clearActiveTripId();
@@ -2321,81 +2340,93 @@ class _EnhancedFarePanel extends StatelessWidget {
     required this.shimmerAnimation,
   });
 
-  @override
-  Widget build(BuildContext context) {
-    if (loading) {
-      return _buildShimmerLoading();
-    }
-
-    if (fares.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    final vehiclesToShow = showAll
-        ? vehicleLabels
-        : (selectedVehicle != null ? [selectedVehicle!] : [vehicleLabels.first]);
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              GestureDetector(
-                onTap: onBack,
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.divider),
-                  ),
-                  child: const Icon(
-                    Icons.arrow_back,
-                    color: AppColors.onSurface,
-                    size: 20,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "Choose your ride",
-                      style: AppTextStyles.heading2,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      "${vehiclesToShow.length} option${vehiclesToShow.length > 1 ? 's' : ''} available",
-                      style: AppTextStyles.body2,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 32),
-          ...vehiclesToShow.map((vehicle) {
-            final fare = fares[vehicle];
-            final isSelected = selectedVehicle == vehicle;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: _EnhancedFareCard(
-                vehicle: vehicle,
-                fare: fare,
-                selected: isSelected,
-                onTap: () => onVehicleSelected(vehicle),
-                durationSec: durationSec,
-              ),
-            );
-          }).toList(),
-        ],
-      ),
-    );
+@override
+Widget build(BuildContext context) {
+  if (loading) {
+    return _buildShimmerLoading();
   }
+
+  if (fares.isEmpty) {
+    return const SizedBox.shrink();
+  }
+
+  // ✅ CRITICAL FIX: Only show vehicles that have fares
+  final List<String> vehiclesToShow = fares.keys.toList();
+
+  debugPrint('📋 Displaying vehicles: $vehiclesToShow (showAll: $showAll)');
+
+  if (vehiclesToShow.isEmpty) {
+    return const SizedBox.shrink();
+  }
+
+  return Padding(
+    padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            GestureDetector(
+              onTap: onBack,
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.divider),
+                ),
+                child: const Icon(
+                  Icons.arrow_back,
+                  color: AppColors.onSurface,
+                  size: 20,
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    vehiclesToShow.length == 1 
+                        ? "Your ${_capitalize(vehiclesToShow.first)}"
+                        : "Choose your ride",
+                    style: AppTextStyles.heading2,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    vehiclesToShow.length == 1
+                        ? "Best fare for your trip"
+                        : "${vehiclesToShow.length} options available",
+                    style: AppTextStyles.body2,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 32),
+        ...vehiclesToShow.map((vehicle) {
+          final fare = fares[vehicle];
+          final isSelected = selectedVehicle == vehicle;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: _EnhancedFareCard(
+              vehicle: vehicle,
+              fare: fare,
+              selected: isSelected,
+              onTap: () => onVehicleSelected(vehicle),
+              durationSec: durationSec,
+            ),
+          );
+        }).toList(),
+      ],
+    ),
+  );
+}
+
+String _capitalize(String s) =>
+    s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : s;
 
   Widget _buildShimmerLoading() {
     return Padding(

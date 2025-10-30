@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -18,74 +17,70 @@ import 'ride_history_page.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'models/trip_args.dart';
+import '/widgets/global_sos_button.dart'; // Add this import
 
-const String googleMapsApiKey = 'YOUR_API_KEY_HERE'; // Replace with your key
+const String googleMapsApiKey = 'AIzaSyB7VstS4RZlou2jyNgzkKePGqNbs2MyzYY';
 
-// --- NEW COLOR PALETTE (60-30-10) ---
+// --- COLOR PALETTE ---
 class AppColors {
-  // Core palette based on 60-30-10 rule
-  static const Color primary = Color.fromARGB(255, 212, 120, 0); // 30% Dark Green
-  static const Color background = Colors.white;     // 60% White
-  static const Color onSurface = Colors.black;      // 10% Black
-
-  // Derived & Utility Colors
-  static const Color surface = Color(0xFFF5F5F5); // Light gray for cards/inputs
-  static const Color onPrimary = Colors.white;      // Text color on primary background
-  static const Color onSurfaceSecondary = Colors.black54; // For less important text
-  static const Color onSurfaceTertiary = Colors.black38;  // For hints and captions
-  static const Color divider = Color(0xFFEEEEEE);   // Light gray for dividers
-
-  // Standard Status Colors
-  static const Color success = Color.fromARGB(255, 0, 66, 3); // A green that complements the primary
+  static const Color primary = Color.fromARGB(255, 212, 120, 0);
+  static const Color background = Colors.white;
+  static const Color onSurface = Colors.black;
+  static const Color surface = Color(0xFFF5F5F5);
+  static const Color onPrimary = Colors.white;
+  static const Color onSurfaceSecondary = Colors.black54;
+  static const Color onSurfaceTertiary = Colors.black38;
+  static const Color divider = Color(0xFFEEEEEE);
+  static const Color success = Color.fromARGB(255, 0, 66, 3);
   static const Color warning = Color(0xFFFFA000);
   static const Color error = Color(0xFFD32F2F);
 }
 
-// --- UPDATED TYPOGRAPHY ---
+// --- TYPOGRAPHY ---
 class AppTextStyles {
   static TextStyle get heading1 => GoogleFonts.plusJakartaSans(
         fontSize: 32,
         fontWeight: FontWeight.w800,
-        color: AppColors.onSurface, // Black
+        color: AppColors.onSurface,
         letterSpacing: -0.5,
       );
 
   static TextStyle get heading2 => GoogleFonts.plusJakartaSans(
         fontSize: 24,
         fontWeight: FontWeight.w700,
-        color: AppColors.onSurface, // Black
+        color: AppColors.onSurface,
         letterSpacing: -0.3,
       );
 
   static TextStyle get heading3 => GoogleFonts.plusJakartaSans(
         fontSize: 18,
         fontWeight: FontWeight.w600,
-        color: AppColors.onSurface, // Black
+        color: AppColors.onSurface,
       );
 
   static TextStyle get body1 => GoogleFonts.plusJakartaSans(
         fontSize: 16,
         fontWeight: FontWeight.w500,
-        color: AppColors.onSurface, // Black
+        color: AppColors.onSurface,
       );
 
   static TextStyle get body2 => GoogleFonts.plusJakartaSans(
         fontSize: 14,
         fontWeight: FontWeight.w500,
-        color: AppColors.onSurfaceSecondary, // Gray
+        color: AppColors.onSurfaceSecondary,
       );
 
   static TextStyle get caption => GoogleFonts.plusJakartaSans(
         fontSize: 12,
         fontWeight: FontWeight.w500,
-        color: AppColors.onSurfaceTertiary, // Light Gray
+        color: AppColors.onSurfaceTertiary,
         letterSpacing: 0.5,
       );
 
   static TextStyle get button => GoogleFonts.plusJakartaSans(
         fontSize: 16,
         fontWeight: FontWeight.w700,
-        color: AppColors.onSurface, // Black (for light bg buttons)
+        color: AppColors.onSurface,
       );
 }
 
@@ -109,16 +104,19 @@ class _RealHomePageState extends State<RealHomePage>
 
   final TextEditingController _dropController = TextEditingController();
   late final stt.SpeechToText _speech;
+  bool _isListening = false;
 
   String name = '';
   String phone = '';
   String mongoCustomerId = '';
   List<Map<String, dynamic>> locationHistory = [];
 
+  // Current location (PICKUP) - Auto-fetched
   double? _currentLat;
   double? _currentLng;
   String _currentAddress = '';
   String _currentLocationDisplay = 'Getting location...';
+  
   List<Map<String, dynamic>> _suggestions = [];
   Timer? _debounce;
   bool _isLocationLoading = true;
@@ -179,10 +177,7 @@ class _RealHomePageState extends State<RealHomePage>
     }
   }
 
-  // --- Other methods like _loadCachedLocation, _getCurrentLocation, etc. remain the same ---
-  // ... (All backend and logic functions are unchanged)
-
-    Future<void> _loadCachedLocation() async {
+  Future<void> _loadCachedLocation() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
       String? cachedAddress = prefs.getString('cached_pickup_address');
@@ -282,58 +277,63 @@ class _RealHomePageState extends State<RealHomePage>
     }
     return address.length > 25 ? '${address.substring(0, 25)}...' : address;
   }
-Future<void> _fetchUserProfile() async {
-  try {
-    if (widget.customerId.isEmpty) {
-      debugPrint("Cannot fetch profile: customerId is empty");
+
+  Future<void> _fetchUserProfile() async {
+    try {
+      if (widget.customerId.isEmpty) {
+        debugPrint("Cannot fetch profile: customerId is empty");
+        return;
+      }
+      
+      var res = await http.get(
+        Uri.parse('https://b23b44ae0c5e.ngrok-free.app/api/user/id/${widget.customerId}')
+      );
+      
+      if (res.statusCode == 200) {
+        final user = json.decode(res.body)['user'];
+        setState(() {
+          name = user['name'] ?? '';
+          phone = user['phone'] ?? '';
+          mongoCustomerId = user['_id'];
+        });
+        await _loadLocationHistory();
+      } else {
+        debugPrint("Failed to fetch profile: ${res.statusCode}");
+      }
+    } catch (e) {
+      debugPrint("Failed to fetch profile: $e");
+    }
+  }
+
+  Future<void> _loadLocationHistory() async {
+    if (phone.isEmpty) {
+      debugPrint("Phone not available yet, skipping location history load");
       return;
     }
     
-    var res = await http.get(
-      Uri.parse('https://7668d252ef1d.ngrok-free.app/api/user/id/${widget.customerId}')
-    );
-    
-    if (res.statusCode == 200) {
-      final user = json.decode(res.body)['user'];
-      setState(() {
-        name = user['name'] ?? '';
-        phone = user['phone'] ?? '';
-        mongoCustomerId = user['_id'];
-      });
-      await _loadLocationHistory();
-    } else {
-      debugPrint("Failed to fetch profile: ${res.statusCode}");
-    }
-  } catch (e) {
-    debugPrint("Failed to fetch profile: $e");
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'location_history_$phone';
+    final rawList = prefs.getStringList(key) ?? [];
+    setState(() {
+      locationHistory = rawList.map((e) {
+        try {
+          return jsonDecode(e) as Map<String, dynamic>;
+        } catch (_) {
+          return {'address': e};
+        }
+      }).toList();
+    });
   }
-}
- Future<void> _loadLocationHistory() async {
-  if (phone.isEmpty) {
-    debugPrint("Phone not available yet, skipping location history load");
-    return;
-  }
-  
-  final prefs = await SharedPreferences.getInstance();
-  final key = 'location_history_$phone';
-  final rawList = prefs.getStringList(key) ?? [];
-  setState(() {
-    locationHistory = rawList.map((e) {
-      try {
-        return jsonDecode(e) as Map<String, dynamic>;
-      } catch (_) {
-        return {'address': e};
-      }
-    }).toList();
-  });
-}
+
   Future<void> _saveToHistory(String address, {double? lat, double? lng}) async {
     const invalidTerms = ['bike', 'auto', 'car', 'premium', 'xl'];
     if (invalidTerms.any((term) => address.toLowerCase().contains(term))) return;
-if (phone.isEmpty) {
-    debugPrint("⚠️ Phone not set yet, cannot save to history");
-    return;
-  }
+    
+    if (phone.isEmpty) {
+      debugPrint("⚠️ Phone not set yet, cannot save to history");
+      return;
+    }
+    
     final prefs = await SharedPreferences.getInstance();
     final key = 'location_history_${phone.isNotEmpty ? phone : 'unknown'}';
     locationHistory.removeWhere((item) => item['address'] == address);
@@ -342,6 +342,8 @@ if (phone.isEmpty) {
       if (lat != null) 'lat': lat,
       if (lng != null) 'lng': lng,
     });
+    
+    // ✅ Keep only last 10 in storage, but display only 3-4
     if (locationHistory.length > 10) {
       locationHistory = locationHistory.sublist(0, 10);
     }
@@ -402,12 +404,15 @@ if (phone.isEmpty) {
     final placeId = suggestion['place_id'] as String;
     final description = suggestion['description'] as String;
 
+    // Close keyboard
+    FocusScope.of(context).unfocus();
+
     if (placeId.isEmpty) {
       _dropController.text = description;
       double? lat = suggestion['lat'] as double?;
       double? lng = suggestion['lng'] as double?;
       if (lat != null && lng != null) {
-        _navigateToShortTripWithDrop(description, dropLat: lat, dropLng: lng);
+        _navigateToFares(description, dropLat: lat, dropLng: lng);
       } else {
         await _geocodeAndNavigate(description);
       }
@@ -415,6 +420,27 @@ if (phone.isEmpty) {
     }
 
     try {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.onPrimary),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Text('Getting location details...', style: AppTextStyles.body2.copyWith(color: AppColors.onPrimary)),
+            ],
+          ),
+          backgroundColor: AppColors.primary,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+
       final url = Uri.parse(
         'https://maps.googleapis.com/maps/api/place/details/json?place_id=$placeId&key=$googleMapsApiKey',
       );
@@ -429,22 +455,30 @@ if (phone.isEmpty) {
           final geometry = result['geometry']?['location'];
           final lat = geometry != null ? geometry['lat'] as double? : null;
           final lng = geometry != null ? geometry['lng'] as double? : null;
-          _dropController.text = address;
-          _saveToHistory(address, lat: lat, lng: lng);
-          _navigateToShortTripWithDrop(address, dropLat: lat, dropLng: lng);
+          
+          if (lat != null && lng != null) {
+            _dropController.text = address;
+            _saveToHistory(address, lat: lat, lng: lng);
+            _navigateToFares(address, dropLat: lat, dropLng: lng);
+          } else {
+            throw Exception('Invalid coordinates received');
+          }
         }
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to get location details: $e', style: const TextStyle(color: AppColors.onPrimary)),
-          backgroundColor: AppColors.error,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to get location details: $e', style: const TextStyle(color: AppColors.onPrimary)),
+            backgroundColor: AppColors.error,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     }
   }
 
-  void _navigateToShortTripWithDrop(String dropAddress, {double? dropLat, double? dropLng}) {
+  void _navigateToFares(String dropAddress, {double? dropLat, double? dropLng}) {
     if (_currentLat == null || _currentLng == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -454,8 +488,10 @@ if (phone.isEmpty) {
       );
       return;
     }
+    
     if (dropLat != null && dropLng != null) {
       _saveToHistory(dropAddress, lat: dropLat, lng: dropLng);
+      
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -470,11 +506,28 @@ if (phone.isEmpty) {
               vehicleType: null,
               showAllFares: true,
             ),
+            initialPickup: {
+              'lat': _currentLat!,
+              'lng': _currentLng!,
+              'address': _currentAddress,
+            },
+            initialDrop: {
+              'lat': dropLat,
+              'lng': dropLng,
+              'address': dropAddress,
+            },
             entryMode: 'search',
             customerId: mongoCustomerId,
           ),
         ),
-      ).then((_) => _fetchUserProfile());
+      ).then((_) {
+        // ✅ Clear suggestions and search text when coming back
+        setState(() {
+          _suggestions = [];
+          _dropController.clear();
+        });
+        _fetchUserProfile();
+      });
     } else {
       _geocodeAndNavigate(dropAddress);
     }
@@ -493,7 +546,10 @@ if (phone.isEmpty) {
           final loc = results[0]['geometry']['location'];
           final lat = (loc['lat'] as num).toDouble();
           final lng = (loc['lng'] as num).toDouble();
-          _saveToHistory(address, lat: lat, lng: lng);
+          final formattedAddress = results[0]['formatted_address'] as String? ?? address;
+          
+          _saveToHistory(formattedAddress, lat: lat, lng: lng);
+          
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -502,60 +558,136 @@ if (phone.isEmpty) {
                   pickupLat: _currentLat!,
                   pickupLng: _currentLng!,
                   pickupAddress: _currentAddress,
-                  dropAddress: address,
+                  dropAddress: formattedAddress,
                   dropLat: lat,
                   dropLng: lng,
                   vehicleType: null,
                   showAllFares: true,
                 ),
+                initialPickup: {
+                  'lat': _currentLat!,
+                  'lng': _currentLng!,
+                  'address': _currentAddress,
+                },
+                initialDrop: {
+                  'lat': lat,
+                  'lng': lng,
+                  'address': formattedAddress,
+                },
                 entryMode: 'search',
                 customerId: mongoCustomerId,
               ),
             ),
-          ).then((_) => _fetchUserProfile());
+          ).then((_) {
+            // ✅ Clear suggestions and search text when coming back
+            setState(() {
+              _suggestions = [];
+              _dropController.clear();
+            });
+            _fetchUserProfile();
+          });
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Location not found. Please try another search.'),
+                backgroundColor: AppColors.warning,
+              ),
+            );
+          }
         }
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to geocode address: $e', style: const TextStyle(color: AppColors.onPrimary)),
-          backgroundColor: AppColors.error,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to geocode address: $e', style: const TextStyle(color: AppColors.onPrimary)),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
     }
   }
 
-  void _navigateToShortTrip(String vehicleType) {
-    if (_currentLat == null || _currentLng == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Please wait while we get your location', style: const TextStyle(color: AppColors.onSurface)),
-          backgroundColor: AppColors.warning,
-        ),
-      );
+  Future<void> _toggleListening() async {
+    if (_isListening) {
+      await _speech.stop();
+      setState(() => _isListening = false);
       return;
     }
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ShortTripPage(
-          args: TripArgs(
-            pickupLat: _currentLat!,
-            pickupLng: _currentLng!,
-            pickupAddress: _currentAddress,
-            vehicleType: vehicleType,
-            showAllFares: false,
-          ),
-          customerId: mongoCustomerId,
-        ),
-      ),
-    ).then((_) => _fetchUserProfile());
+
+    bool available = await _speech.initialize(
+      onStatus: (status) {
+        if (status == 'done') {
+          setState(() => _isListening = false);
+        }
+      },
+      onError: (error) {
+        setState(() => _isListening = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Speech input unavailable, please type')),
+          );
+        }
+      },
+    );
+
+    if (!available) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Speech recognition not available')),
+        );
+      }
+      return;
+    }
+
+    setState(() => _isListening = true);
+    HapticFeedback.mediumImpact();
+    
+    await _speech.listen(
+      onResult: (result) {
+        if (result.finalResult) {
+          setState(() {
+            _dropController.text = result.recognizedWords;
+          });
+          _fetchSuggestions(result.recognizedWords);
+        }
+      },
+    );
   }
 
+ void _navigateToShortTrip(String vehicleType) {
+  if (_currentLat == null || _currentLng == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Please wait while we get your location', style: const TextStyle(color: AppColors.onSurface)),
+        backgroundColor: AppColors.warning,
+      ),
+    );
+    return;
+  }
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => ShortTripPage(
+        args: TripArgs(
+          pickupLat: _currentLat!,
+          pickupLng: _currentLng!,
+          pickupAddress: _currentAddress,
+          vehicleType: vehicleType,
+          showAllFares: false,  // ✅ This should be false
+        ),
+        customerId: mongoCustomerId,
+        vehicleType: vehicleType, // ✅ Pass this too
+      ),
+    ),
+  ).then((_) => _fetchUserProfile());
+}
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background, // Set to white
+      backgroundColor: AppColors.background,
       body: PageView(
         controller: _pageController,
         onPageChanged: (index) {
@@ -572,6 +704,8 @@ if (phone.isEmpty) {
         ],
       ),
       bottomNavigationBar: _buildEnhancedBottomNav(),
+      floatingActionButton: const GlobalSOSButton(),
+  floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
 
@@ -586,8 +720,12 @@ if (phone.isEmpty) {
             slivers: [
               _buildEnhancedHeader(),
               _buildSearchBar(),
-              if (_suggestions.isNotEmpty) _buildSuggestionsList(),
-              if (_suggestions.isEmpty) ...[
+              if (_suggestions.isNotEmpty) 
+                _buildSuggestionsList()
+              else ...[
+                // ✅ Show only 3-4 recent searches when no active search
+                if (locationHistory.isNotEmpty)
+                  _buildRecentSearches(),
                 _buildServicesSection(),
                 _buildPromotionsSection(),
               ],
@@ -720,9 +858,30 @@ if (phone.isEmpty) {
                   onChanged: _fetchSuggestions,
                   onSubmitted: (value) {
                     if (value.isNotEmpty) {
-                      _navigateToShortTripWithDrop(value);
+                      setState(() => _suggestions = []);
+                      _geocodeAndNavigate(value);
                     }
                   },
+                  textInputAction: TextInputAction.search,
+                ),
+              ),
+              GestureDetector(
+                onTap: _toggleListening,
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: _isListening ? AppColors.primary.withOpacity(0.1) : AppColors.background,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: _isListening ? AppColors.primary : AppColors.divider,
+                      width: _isListening ? 2 : 1,
+                    ),
+                  ),
+                  child: Icon(
+                    _isListening ? Icons.mic : Icons.mic_none,
+                    color: _isListening ? AppColors.primary : AppColors.onSurfaceSecondary,
+                    size: 20,
+                  ),
                 ),
               ),
             ],
@@ -745,6 +904,79 @@ if (phone.isEmpty) {
             );
           },
           childCount: _suggestions.length,
+        ),
+      ),
+    );
+  }
+
+  // ✅ Show only 3-4 recent searches
+  Widget _buildRecentSearches() {
+    final recentItems = locationHistory.take(4).toList(); // Show max 4 items
+    
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  "Recent Searches",
+                  style: AppTextStyles.heading3.copyWith(fontSize: 17),
+                ),
+                if (locationHistory.isNotEmpty)
+                  GestureDetector(
+                    onTap: () async {
+                      HapticFeedback.lightImpact();
+                      final prefs = await SharedPreferences.getInstance();
+                      final key = 'location_history_$phone';
+                      await prefs.remove(key);
+                      setState(() => locationHistory.clear());
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: AppColors.error.withOpacity(0.3)),
+                      ),
+                      child: Text(
+                        "Clear all",
+                        style: AppTextStyles.caption.copyWith(
+                          color: AppColors.error,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ...recentItems.map((item) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _EnhancedLocationCard(
+                  title: item['address'] ?? '',
+                  subtitle: "Recent destination",
+                  icon: Icons.history,
+                  iconColor: AppColors.warning,
+                  onTap: () {
+                    final address = item['address'] ?? '';
+                    final lat = item['lat'] as double?;
+                    final lng = item['lng'] as double?;
+                    
+                    if (lat != null && lng != null) {
+                      _navigateToFares(address, dropLat: lat, dropLng: lng);
+                    } else {
+                      _geocodeAndNavigate(address);
+                    }
+                  },
+                ),
+              );
+            }).toList(),
+          ],
         ),
       ),
     );
@@ -951,11 +1183,11 @@ if (phone.isEmpty) {
     return 'evening';
   }
 
-    void _showAllServices() {
+  void _showAllServices() {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: AppColors.background, // White background
+      backgroundColor: AppColors.background,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
       ),
@@ -1049,7 +1281,7 @@ if (phone.isEmpty) {
               decoration: BoxDecoration(
                 color: AppColors.primary,
                 borderRadius: BorderRadius.circular(20),
-                 boxShadow: [
+                boxShadow: [
                   BoxShadow(
                     color: AppColors.primary.withOpacity(0.2),
                     blurRadius: 10,
@@ -1072,7 +1304,7 @@ if (phone.isEmpty) {
   }
 }
 
-// --- UPDATED UI COMPONENTS ---
+// --- UI COMPONENTS ---
 
 class _EnhancedSuggestionCard extends StatelessWidget {
   final Map<String, dynamic> suggestion;
@@ -1121,6 +1353,94 @@ class _EnhancedSuggestionCard extends StatelessWidget {
                 const Icon(Icons.arrow_forward_ios, color: AppColors.onSurfaceTertiary, size: 14),
               ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EnhancedLocationCard extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final Color iconColor;
+  final VoidCallback onTap;
+
+  const _EnhancedLocationCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.iconColor,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          HapticFeedback.selectionClick();
+          onTap();
+        },
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.background,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.divider, width: 1),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: iconColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: iconColor.withOpacity(0.3),
+                    width: 1,
+                  ),
+                ),
+                child: Icon(icon, color: iconColor, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: AppTextStyles.body1.copyWith(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (subtitle.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: AppTextStyles.body2.copyWith(fontSize: 13),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios, color: AppColors.onSurfaceTertiary, size: 14),
+            ],
           ),
         ),
       ),

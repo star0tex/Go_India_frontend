@@ -20,7 +20,7 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _otpController = TextEditingController();
   final FocusNode _otpFocus = FocusNode();
-  final String apiUrl = 'https://7668d252ef1d.ngrok-free.app';
+  final String apiUrl = 'https://b23b44ae0c5e.ngrok-free.app';
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   bool _codeSent = false;

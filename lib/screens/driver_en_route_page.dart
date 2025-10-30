@@ -12,8 +12,8 @@ import '../services/socket_service.dart';
 import '../screens/chat_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const String apiBase = 'https://7668d252ef1d.ngrok-free.app';
-const String googleMapsApiKey = 'AIzaSyB7VstS4RZlou2jyNgzkKePGqNbs2MyzYY'; // ✅ Your API key
+const String apiBase = 'https://b23b44ae0c5e.ngrok-free.app';
+const String googleMapsApiKey = 'AIzaSyB7VstS4RZlou2jyNgzkKePGqNbs2MyzYY';
 
 // --- MATCHING COLOR PALETTE ---
 class AppColors {
@@ -94,30 +94,24 @@ class DriverEnRoutePage extends StatefulWidget {
 }
 
 class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
-  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
-    const double p = 0.017453292519943295;
-    final double a = 0.5 -
-        cos((lat2 - lat1) * p) / 2 +
-        cos(lat1 * p) * cos(lat2 * p) * (1 - cos((lon2 - lon1) * p)) / 2;
-    return 12742 * 1000 * asin(sqrt(a));
-  }
-
-  GoogleMapController? _mapController;
+  final Completer<GoogleMapController> _controller = Completer();
   final Set<Marker> _markers = {};
   final Set<Polyline> _polylines = {};
   BitmapDescriptor? _bikeIcon;
   String? rideCode;
   String rideStatus = 'driver_coming';
-  
+
   late LatLng _driverPosition;
-  LatLng? _previousDriverPosition; // ✅ Track previous position for bearing
+  LatLng? _previousDriverPosition;
   late LatLng _pickupPosition;
   late LatLng _dropPosition;
   Timer? _locationTimer;
   double? _driverDistance;
   int? _estimatedMinutes;
   double? finalFare;
-  double _currentBearing = 0.0; // ✅ Store bearing for rotation
+  double _currentBearing = 0.0;
+  
+  bool _initialBoundsFit = false;
 
   @override
   void initState() {
@@ -125,7 +119,7 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
 
     rideCode = widget.tripDetails['rideCode']?.toString();
     debugPrint('🔍 Initial rideCode from tripDetails: $rideCode');
-    
+
     _driverPosition = LatLng(
       widget.driverDetails['location']['lat'],
       widget.driverDetails['location']['lng'],
@@ -145,8 +139,18 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
     _locationTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       _fetchDriverLocation();
     });
+    
+    _updateMarkers();
     _drawPolyline();
     _updateDriverDistance();
+  }
+
+  double _calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+    const double p = 0.017453292519943295;
+    final double a = 0.5 -
+        cos((lat2 - lat1) * p) / 2 +
+        cos(lat1 * p) * cos(lat2 * p) * (1 - cos((lon2 - lon1) * p)) / 2;
+    return 12742 * 1000 * asin(sqrt(a));
   }
 
   @override
@@ -158,31 +162,28 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
     SocketService().off('trip:cancelled');
     SocketService().off('trip:cash_collected');
     _locationTimer?.cancel();
-    _mapController?.dispose();
     super.dispose();
   }
 
-  // ✅ FIXED: Proper bike marker loading with custom size
   Future<void> _loadCustomMarkers() async {
     try {
       final ByteData data = await rootBundle.load('assets/images/bikelive.png');
       final ui.Codec codec = await ui.instantiateImageCodec(
         data.buffer.asUint8List(),
-        targetWidth: 120, // ✅ Increase size to 120px (was 64px)
+        targetWidth: 120,
         targetHeight: 120,
       );
       final ui.FrameInfo fi = await codec.getNextFrame();
       final ByteData? markerData = await fi.image.toByteData(
         format: ui.ImageByteFormat.png,
       );
-      
+
       if (markerData != null) {
         _bikeIcon = BitmapDescriptor.fromBytes(markerData.buffer.asUint8List());
         debugPrint('✅ Bike marker loaded successfully (120x120)');
       }
     } catch (e) {
       debugPrint('❌ Error loading bike marker: $e');
-      // Fallback to default marker
       _bikeIcon = BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange);
     }
     _updateMarkers();
@@ -192,15 +193,14 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
     SocketService().on('driver:locationUpdate', (data) {
       if (!mounted) return;
       debugPrint('📍 Driver location update: $data');
-      
+
       final lat = data['latitude'];
       final lng = data['longitude'];
       if (lat is num && lng is num) {
         setState(() {
-          _previousDriverPosition = _driverPosition; // ✅ Store old position
+          _previousDriverPosition = _driverPosition;
           _driverPosition = LatLng(lat.toDouble(), lng.toDouble());
           
-          // ✅ Calculate bearing for rotation
           if (_previousDriverPosition != null) {
             _currentBearing = _calculateBearing(
               _previousDriverPosition!.latitude,
@@ -211,14 +211,19 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
           }
           
           _updateMarkers();
-          _drawPolyline(); // ✅ Redraw route with new position
           _updateDriverDistance();
-          
-          // Smooth camera movement
-          _mapController?.animateCamera(
-            CameraUpdate.newLatLng(_driverPosition),
-          );
         });
+        
+        _drawPolyline();
+        
+        // Smooth camera follow
+        if (_initialBoundsFit) {
+          _controller.future.then((controller) {
+            controller.animateCamera(
+              CameraUpdate.newLatLng(_driverPosition),
+            );
+          });
+        }
       }
     });
 
@@ -267,21 +272,49 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
       }
     });
 
+    // ✅ ENHANCED: Ride started with visual transition
     SocketService().on('trip:ride_started', (data) {
       if (!mounted) return;
       debugPrint('🚗 Ride started: $data');
       
+      // Update ride status
       setState(() {
         rideStatus = 'ride_started';
+        _initialBoundsFit = false; // Reset to refit bounds for new destination
       });
       
-      _drawPolyline(); // ✅ Redraw to show route to destination
+      // ✅ Update markers (removes pickup, keeps driver and drop)
+      _updateMarkers();
       
+      // ✅ Redraw polyline from driver to drop location
+      _drawPolyline().then((_) {
+        // ✅ After polyline is drawn, fit camera to show new route
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) {
+            _moveCameraToFitBounds();
+          }
+        });
+      });
+      
+      // ✅ Show success message
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Ride started! Heading to destination', 
-            style: TextStyle(color: AppColors.onPrimary)),
+          content: Row(
+            children: const [
+              Icon(Icons.check_circle, color: AppColors.onPrimary),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Ride started! Heading to destination',
+                  style: TextStyle(color: AppColors.onPrimary, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
           backgroundColor: AppColors.success,
+          duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       );
     });
@@ -375,118 +408,150 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
     );
   }
 
-  // ✅ Calculate bearing between two points for marker rotation
   double _calculateBearing(double lat1, double lon1, double lat2, double lon2) {
     final dLon = (lon2 - lon1) * pi / 180;
     final lat1Rad = lat1 * pi / 180;
     final lat2Rad = lat2 * pi / 180;
-    
+
     final y = sin(dLon) * cos(lat2Rad);
     final x = cos(lat1Rad) * sin(lat2Rad) -
         sin(lat1Rad) * cos(lat2Rad) * cos(dLon);
-    
+
     final bearing = atan2(y, x) * 180 / pi;
-    return (bearing + 360) % 360; // Normalize to 0-360
+    return (bearing + 360) % 360;
   }
 
   void _updateMarkers() {
     setState(() {
       _markers.clear();
-      
-      // ✅ Driver marker with proper size and rotation
+
+      // ✅ Always show driver marker
       _markers.add(
         Marker(
           markerId: const MarkerId('driver'),
           position: _driverPosition,
           icon: _bikeIcon ?? BitmapDescriptor.defaultMarker,
-          anchor: const Offset(0.5, 0.5), // Center the marker
-          flat: true, // Keep flat on map for smooth rotation
-          rotation: _currentBearing, // ✅ Rotate based on direction
-          zIndex: 10, // ✅ Keep on top
+          anchor: const Offset(0.5, 0.5),
+          flat: true,
+          rotation: _currentBearing,
+          zIndex: 10,
+          infoWindow: InfoWindow(
+            title: 'Your Driver',
+            snippet: '${_driverDistance?.toStringAsFixed(1) ?? '...'} km away',
+          ),
         ),
       );
       
-      // Pickup marker (only show if ride not started)
+      // ✅ Show pickup marker only when driver is coming
       if (rideStatus == 'driver_coming') {
         _markers.add(
           Marker(
             markerId: const MarkerId('pickup'),
             position: _pickupPosition,
             icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-            infoWindow: const InfoWindow(title: 'Pickup Location'),
+            infoWindow: const InfoWindow(
+              title: '📍 Pickup Location',
+              snippet: 'Driver is coming here',
+            ),
           ),
         );
       }
       
-      // Drop marker
+      // ✅ Always show drop marker (destination)
       _markers.add(
         Marker(
           markerId: const MarkerId('drop'),
           position: _dropPosition,
           icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-          infoWindow: const InfoWindow(title: 'Drop Location'),
+          infoWindow: InfoWindow(
+            title: rideStatus == 'ride_started' ? '🎯 Destination' : '📍 Drop Location',
+            snippet: rideStatus == 'ride_started' 
+                ? 'Heading here now' 
+                : 'Your destination',
+          ),
         ),
       );
     });
+    
+    debugPrint('🗺️ Markers updated - Status: $rideStatus, Markers: ${_markers.length}');
   }
 
   void _onMapCreated(GoogleMapController controller) {
-    _mapController = controller;
+    _controller.complete(controller);
+    
+    // Auto-fit bounds after map creation
     Future.delayed(const Duration(milliseconds: 500), () {
-      _fitMapBounds();
+      if (mounted) {
+        _moveCameraToFitBounds();
+      }
     });
   }
 
-  void _fitMapBounds() {
-    if (_mapController == null) return;
-    
-    LatLng target = rideStatus == 'ride_started' ? _dropPosition : _pickupPosition;
-    
-    _mapController!.animateCamera(
-      CameraUpdate.newLatLngBounds(
-        LatLngBounds(
-          southwest: LatLng(
-            min(_driverPosition.latitude, target.latitude) - 0.005,
-            min(_driverPosition.longitude, target.longitude) - 0.005,
-          ),
-          northeast: LatLng(
-            max(_driverPosition.latitude, target.latitude) + 0.005,
-            max(_driverPosition.longitude, target.longitude) + 0.005,
-          ),
-        ),
-        100.0, // Padding
-      ),
-    );
+  // ✅ AUTO-ZOOM to fit both markers (driver and pickup/destination)
+  Future<void> _moveCameraToFitBounds() async {
+    try {
+      final GoogleMapController controller = await _controller.future;
+      
+      LatLng target = rideStatus == 'ride_started' ? _dropPosition : _pickupPosition;
+      
+      // Calculate bounds
+      double minLat = min(_driverPosition.latitude, target.latitude);
+      double maxLat = max(_driverPosition.latitude, target.latitude);
+      double minLng = min(_driverPosition.longitude, target.longitude);
+      double maxLng = max(_driverPosition.longitude, target.longitude);
+      
+      // Add padding (15% extra space)
+      double latDiff = maxLat - minLat;
+      double lngDiff = maxLng - minLng;
+      double latPadding = latDiff * 0.15;
+      double lngPadding = lngDiff * 0.15;
+      
+      // Minimum padding if markers are very close
+      if (latPadding < 0.005) latPadding = 0.005;
+      if (lngPadding < 0.005) lngPadding = 0.005;
+      
+      LatLngBounds bounds = LatLngBounds(
+        southwest: LatLng(minLat - latPadding, minLng - lngPadding),
+        northeast: LatLng(maxLat + latPadding, maxLng + lngPadding),
+      );
+      
+      controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+      
+      _initialBoundsFit = true;
+      debugPrint('✅ Camera fitted to bounds - Showing route to ${rideStatus == 'ride_started' ? 'destination' : 'pickup'}');
+    } catch (e) {
+      debugPrint('❌ Error fitting bounds: $e');
+    }
   }
 
   Future<void> _fetchDriverLocation() async {
     // Socket updates handled in _setupSocketListeners
   }
 
-  // ✅ FIXED: Now fetches REAL routes from Google Directions API
   Future<void> _drawPolyline() async {
     _polylines.clear();
-    
+
     LatLng destination;
     String routeId;
     Color routeColor;
-    
+    String routeLabel;
+
     if (rideStatus == 'driver_coming') {
-      // Driver to pickup - REAL route (not straight line)
       destination = _pickupPosition;
       routeId = 'driver_to_pickup';
       routeColor = AppColors.primary;
+      routeLabel = 'Route to pickup';
     } else {
-      // Driver to drop - REAL route
       destination = _dropPosition;
       routeId = 'driver_to_drop';
       routeColor = AppColors.success;
+      routeLabel = 'Route to destination';
     }
-    
-    debugPrint('🔄 Fetching route from Directions API...');
-    debugPrint('   From: ${_driverPosition.latitude}, ${_driverPosition.longitude}');
-    debugPrint('   To: ${destination.latitude}, ${destination.longitude}');
-    
+
+    debugPrint('🔄 Fetching $routeLabel from Directions API...');
+    debugPrint('   From: Driver (${_driverPosition.latitude}, ${_driverPosition.longitude})');
+    debugPrint('   To: ${rideStatus == 'driver_coming' ? 'Pickup' : 'Drop'} (${destination.latitude}, ${destination.longitude})');
+
     try {
       final uri = Uri.parse(
         'https://maps.googleapis.com/maps/api/directions/json'
@@ -504,12 +569,8 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
         },
       );
       
-      debugPrint('📥 Directions API response: ${response.statusCode}');
-      
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = json.decode(response.body);
-        
-        debugPrint('   Status: ${data['status']}');
         
         if (data['status'] == 'OK' && data['routes'] != null && (data['routes'] as List).isNotEmpty) {
           final route = data['routes'][0];
@@ -526,7 +587,7 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
                   color: routeColor,
                   width: 6,
                   points: routeCoordinates,
-                  geodesic: true, // ✅ Follow earth's curvature
+                  geodesic: true,
                   startCap: Cap.roundCap,
                   endCap: Cap.roundCap,
                   jointType: JointType.round,
@@ -534,7 +595,6 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
               );
             });
             
-            // ✅ Update distance and time from route data
             if (route['legs'] != null && (route['legs'] as List).isNotEmpty) {
               final leg = route['legs'][0];
               final distanceMeters = leg['distance']['value'] as num;
@@ -546,28 +606,20 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
                 if (_estimatedMinutes! < 1) _estimatedMinutes = 1;
               });
               
-              debugPrint('   Distance: ${_driverDistance!.toStringAsFixed(2)} km');
-              debugPrint('   Duration: $_estimatedMinutes min');
+              debugPrint('   ✅ Distance: ${_driverDistance!.toStringAsFixed(2)} km');
+              debugPrint('   ✅ Duration: $_estimatedMinutes min');
+              debugPrint('   ✅ Route color: ${rideStatus == 'driver_coming' ? 'Orange (to pickup)' : 'Green (to destination)'}');
             }
             
             return;
           }
-        } else if (data['status'] == 'ZERO_RESULTS') {
-          debugPrint('⚠️ No route found between points');
-        } else if (data['status'] == 'REQUEST_DENIED') {
-          debugPrint('❌ API key issue: ${data['error_message']}');
-        } else {
-          debugPrint('⚠️ Unexpected status: ${data['status']}');
         }
-      } else {
-        debugPrint('❌ HTTP error: ${response.statusCode}');
-        debugPrint('   Body: ${response.body}');
       }
     } catch (e) {
       debugPrint('❌ Error fetching route: $e');
     }
-    
-    // ✅ Fallback to straight line if API fails
+
+    // Fallback to straight line
     debugPrint('⚠️ Using fallback straight line');
     setState(() {
       _polylines.add(
@@ -580,16 +632,14 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
           patterns: [
             PatternItem.dash(20),
             PatternItem.gap(10),
-          ], // Dashed to indicate fallback
+          ],
         ),
       );
     });
-    
-    // Calculate straight-line distance for fallback
+
     _updateDriverDistance();
   }
 
-  // ✅ Decode Google's encoded polyline format
   List<LatLng> _decodePolyline(String encoded) {
     List<LatLng> polyline = [];
     int index = 0, len = encoded.length;
@@ -617,20 +667,20 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
 
       polyline.add(LatLng(lat / 1E5, lng / 1E5));
     }
-    
+
     return polyline;
   }
 
   void _updateDriverDistance() {
     LatLng targetLocation = rideStatus == 'ride_started' ? _dropPosition : _pickupPosition;
-    
+
     final double distanceMeters = _calculateDistance(
       _driverPosition.latitude,
       _driverPosition.longitude,
       targetLocation.latitude,
       targetLocation.longitude,
     );
-    
+
     setState(() {
       _driverDistance = distanceMeters / 1000;
       _estimatedMinutes = ((distanceMeters / 1000) / 30 * 60).round();
@@ -654,10 +704,10 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
   void _openChat() async {
     final prefs = await SharedPreferences.getInstance();
     final currentCustomerId = prefs.getString('customerId') ?? '';
-    
+
     final String? tripId = widget.tripDetails['tripId']?.toString();
     final String? driverId = widget.driverDetails['id']?.toString();
-    
+
     if (tripId == null || driverId == null || currentCustomerId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not open chat. Missing details.')),
@@ -701,7 +751,7 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
           TextButton(
             onPressed: () async {
               Navigator.pop(context);
-              
+
               try {
                 final prefs = await SharedPreferences.getInstance();
                 final customerId = prefs.getString('customerId') ?? '';
@@ -770,27 +820,75 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
         elevation: 0,
         systemOverlayStyle: SystemUiOverlayStyle.dark,
       ),
-      body: Stack(
+      // ✅ COLUMN LAYOUT - Map on Top, Card on Bottom
+      body: Column(
         children: [
-          GoogleMap(
-            onMapCreated: _onMapCreated,
-            initialCameraPosition: CameraPosition(
-              target: _driverPosition,
-              zoom: 15,
+          // ✅ TOP SECTION: Map (55% of screen)
+          Expanded(
+            flex: 55,
+            child: Stack(
+              children: [
+                GoogleMap(
+                  onMapCreated: _onMapCreated,
+                  initialCameraPosition: CameraPosition(
+                    target: _driverPosition,
+                    zoom: 14,
+                  ),
+                  markers: _markers,
+                  polylines: _polylines,
+                  myLocationButtonEnabled: false,
+                  myLocationEnabled: true,
+                  compassEnabled: false,
+                  mapToolbarEnabled: false,
+                  zoomControlsEnabled: false,
+                  rotateGesturesEnabled: false,
+                  scrollGesturesEnabled: true,
+                  tiltGesturesEnabled: false,
+                  zoomGesturesEnabled: true,
+                  buildingsEnabled: true,
+                  trafficEnabled: false,
+                ),
+                
+                // ✅ Recenter button
+                Positioned(
+                  top: 16,
+                  right: 16,
+                  child: Material(
+                    elevation: 4,
+                    shape: const CircleBorder(),
+                    color: Colors.transparent,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: AppColors.background,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: IconButton(
+                        icon: const Icon(Icons.my_location, color: AppColors.primary, size: 22),
+                        onPressed: () {
+                          HapticFeedback.selectionClick();
+                          _moveCameraToFitBounds();
+                        },
+                        tooltip: 'Show full route',
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-            markers: _markers,
-            polylines: _polylines,
-            myLocationButtonEnabled: false,
-            myLocationEnabled: true,
-            compassEnabled: true,
-            mapToolbarEnabled: false,
-            zoomControlsEnabled: false,
-            rotateGesturesEnabled: true,
-            scrollGesturesEnabled: true,
-            tiltGesturesEnabled: false,
-            zoomGesturesEnabled: true,
           ),
-          _buildDriverCard(),
+          
+          // ✅ BOTTOM SECTION: Driver Card (45% of screen)
+          Expanded(
+            flex: 45,
+            child: _buildDriverCard(),
+          ),
         ],
       ),
     );
@@ -799,28 +897,28 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
   Widget _buildDriverCard() {
     final driver = widget.driverDetails;
 
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: Container(
-        width: double.infinity,
-        margin: const EdgeInsets.all(0),
-        decoration: BoxDecoration(
-          color: AppColors.background,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(32),
-            topRight: Radius.circular(32),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 30,
-              offset: const Offset(0, -10),
-            ),
-          ],
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(32),
+          topRight: Radius.circular(32),
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.15),
+            blurRadius: 20,
+            offset: const Offset(0, -5),
+          ),
+        ],
+      ),
+      child: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Drag handle
             Container(
               margin: const EdgeInsets.only(top: 12),
               width: 40,
@@ -830,49 +928,96 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
+            
+            // ✅ Status indicator bar
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: rideStatus == 'ride_started' 
+                    ? AppColors.success.withOpacity(0.15)
+                    : AppColors.primary.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: rideStatus == 'ride_started' 
+                      ? AppColors.success
+                      : AppColors.primary,
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    rideStatus == 'ride_started' 
+                        ? Icons.navigation 
+                        : Icons.access_time,
+                    color: rideStatus == 'ride_started' 
+                        ? AppColors.success
+                        : AppColors.primary,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    rideStatus == 'ride_started'
+                        ? '🎯 Heading to your destination'
+                        : '⏱️ Driver is coming to pick you up',
+                    style: AppTextStyles.body2.copyWith(
+                      color: rideStatus == 'ride_started' 
+                          ? AppColors.success
+                          : AppColors.primary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            
             Padding(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Column(
                 children: [
+                  // Driver info row
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(4),
+                        padding: const EdgeInsets.all(3),
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           border: Border.all(
                             color: AppColors.primary,
-                            width: 3,
+                            width: 2.5,
                           ),
                         ),
                         child: CircleAvatar(
-                          radius: 35,
+                          radius: 32,
                           backgroundImage: NetworkImage(
                             driver['photoUrl'] ?? 'https://via.placeholder.com/150',
                           ),
                         ),
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: 14),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
                               driver['name'] ?? 'Driver',
-                              style: AppTextStyles.heading2.copyWith(fontSize: 20),
+                              style: AppTextStyles.heading3.copyWith(fontSize: 18),
                             ),
-                            const SizedBox(height: 4),
+                            const SizedBox(height: 2),
                             Row(
                               children: [
                                 const Icon(
                                   Icons.star,
                                   color: AppColors.primary,
-                                  size: 18,
+                                  size: 16,
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
                                   (driver['rating'] ?? 4.8).toString(),
-                                  style: AppTextStyles.body1.copyWith(
+                                  style: AppTextStyles.body2.copyWith(
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
@@ -888,14 +1033,14 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
                           boxShadow: [
                             BoxShadow(
                               color: AppColors.primary.withOpacity(0.3),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
+                              blurRadius: 8,
+                              offset: const Offset(0, 3),
                             ),
                           ],
                         ),
                         child: IconButton(
                           icon: const Icon(Icons.call, color: AppColors.onPrimary),
-                          iconSize: 24,
+                          iconSize: 22,
                           onPressed: () {
                             HapticFeedback.selectionClick();
                             final phone = driver['phone'] ?? driver['phoneNumber'];
@@ -911,7 +1056,7 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
                           },
                         ),
                       ),
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 10),
                       Container(
                         decoration: BoxDecoration(
                           color: AppColors.primary,
@@ -919,15 +1064,15 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
                           boxShadow: [
                             BoxShadow(
                               color: AppColors.primary.withOpacity(0.3),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
+                              blurRadius: 8,
+                              offset: const Offset(0, 3),
                             ),
                           ],
                         ),
                         child: IconButton(
                           icon: const Icon(Icons.chat_bubble_outline, 
                             color: AppColors.onPrimary),
-                          iconSize: 24,
+                          iconSize: 22,
                           onPressed: () {
                             HapticFeedback.selectionClick();
                             _openChat();
@@ -936,36 +1081,30 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 18),
                   
+                  // OTP section (only shown before ride starts)
                   if (rideCode != null && rideStatus == 'driver_coming')
                     Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
                       decoration: BoxDecoration(
                         color: AppColors.serviceCardBg,
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(14),
                         border: Border.all(color: AppColors.primary, width: 1.5),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.primary.withOpacity(0.1),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
                       ),
                       child: Column(
                         children: [
                           Text(
                             'Your OTP to start the ride',
-                            style: AppTextStyles.body2,
+                            style: AppTextStyles.caption.copyWith(fontSize: 12),
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 6),
                           Text(
                             rideCode!,
                             style: AppTextStyles.heading1.copyWith(
-                              fontSize: 36,
-                              letterSpacing: 8,
+                              fontSize: 32,
+                              letterSpacing: 6,
                             ),
                           ),
                         ],
@@ -973,29 +1112,37 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
                     ),
                   
                   if (rideCode != null && rideStatus == 'driver_coming') 
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
 
+                  // ✅ Ride in progress with animation
                   if (rideStatus == 'ride_started')
                     Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
-                        color: AppColors.success.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(16),
+                        gradient: LinearGradient(
+                          colors: [
+                            AppColors.success.withOpacity(0.15),
+                            AppColors.success.withOpacity(0.05),
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(14),
                         border: Border.all(color: AppColors.success, width: 1.5),
                       ),
                       child: Row(
                         children: [
                           Container(
-                            padding: const EdgeInsets.all(10),
+                            padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
                               color: AppColors.success.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(10),
+                              borderRadius: BorderRadius.circular(8),
                             ),
                             child: const Icon(
                               Icons.directions_car, 
                               color: AppColors.success, 
-                              size: 28
+                              size: 24
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -1008,46 +1155,61 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
                                   style: AppTextStyles.body1.copyWith(
                                     color: AppColors.success,
                                     fontWeight: FontWeight.w700,
+                                    fontSize: 15,
                                   ),
                                 ),
                                 Text(
-                                  'Heading to destination',
-                                  style: AppTextStyles.body2.copyWith(
+                                  'Following route to destination',
+                                  style: AppTextStyles.caption.copyWith(
                                     color: AppColors.success,
                                   ),
                                 ),
                               ],
                             ),
                           ),
+                          // Animated navigation icon
+                          Icon(
+                            Icons.navigation,
+                            color: AppColors.success,
+                            size: 20,
+                          ),
                         ],
                       ),
                     ),
                   
                   if (rideStatus == 'ride_started')
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
 
+                  // Vehicle number
                   Text(
                     'Bike No. ${driver['vehicleNumber'] ?? '1234'}',
-                    style: AppTextStyles.body2.copyWith(fontWeight: FontWeight.w600),
+                    style: AppTextStyles.caption.copyWith(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
                   ),
                  
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 16),
                   
+                  // ETA and cancel section with dynamic color
                   Container(
-                    padding: const EdgeInsets.all(20),
+                    padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
-                      color: AppColors.primary,
-                      borderRadius: BorderRadius.circular(20),
+                      color: rideStatus == 'ride_started' 
+                          ? AppColors.success
+                          : AppColors.primary,
+                      borderRadius: BorderRadius.circular(18),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.primary.withOpacity(0.3),
-                          blurRadius: 15,
-                          offset: const Offset(0, 5),
+                          color: (rideStatus == 'ride_started' 
+                              ? AppColors.success
+                              : AppColors.primary).withOpacity(0.3),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
                         ),
                       ],
                     ),
                     child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Expanded(
                           child: Column(
@@ -1055,11 +1217,11 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
                             children: [
                               Text(
                                 rideStatus == 'ride_started' 
-                                    ? 'Time to Destination'
+                                    ? 'Arriving in'
                                     : 'Driver Arriving In',
                                 style: AppTextStyles.caption.copyWith(
                                   color: AppColors.onPrimary.withOpacity(0.9),
-                                  fontSize: 13,
+                                  fontSize: 12,
                                 ),
                               ),
                               const SizedBox(height: 4),
@@ -1069,15 +1231,16 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
                                     : 'Calculating...',
                                 style: AppTextStyles.heading2.copyWith(
                                   color: AppColors.onPrimary,
-                                  fontSize: 28,
+                                  fontSize: 26,
                                 ),
                               ),
                               if (_driverDistance != null) ...[
-                                const SizedBox(height: 4),
+                                const SizedBox(height: 2),
                                 Text(
                                   '${_driverDistance!.toStringAsFixed(1)} km away',
                                   style: AppTextStyles.caption.copyWith(
-                                    color: AppColors.onPrimary.withOpacity(0.8),
+                                    color: AppColors.onPrimary.withOpacity(0.85),
+                                    fontSize: 11,
                                   ),
                                 ),
                               ],
@@ -1092,12 +1255,12 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
                             },
                             child: Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 10,
+                                horizontal: 14,
+                                vertical: 8,
                               ),
                               decoration: BoxDecoration(
                                 color: AppColors.onPrimary.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
                                   color: AppColors.onPrimary,
                                   width: 1.5,
@@ -1106,7 +1269,7 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
                               child: Text(
                                 'Cancel',
                                 style: AppTextStyles.button.copyWith(
-                                  fontSize: 14,
+                                  fontSize: 13,
                                 ),
                               ),
                             ),
@@ -1117,6 +1280,7 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
                 ],
               ),
             ),
+            const SizedBox(height: 20),
           ],
         ),
       ),

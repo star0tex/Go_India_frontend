@@ -9,7 +9,7 @@ class SocketService {
   static final SocketService _instance = SocketService._internal();
   factory SocketService() => _instance;
   SocketService._internal();
-  final String baseUrl = 'https://7668d252ef1d.ngrok-free.app'; // ✅ Replace with your server URL
+  final String baseUrl = 'https://b23b44ae0c5e.ngrok-free.app'; // ✅ Replace with your server URL
 
   // Private State
   IO.Socket? _socket;
