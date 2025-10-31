@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_china1/screens/driver_en_route_page.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'short_trip_page.dart';
@@ -20,7 +21,7 @@ import 'models/trip_args.dart';
 import '/widgets/global_sos_button.dart'; // Add this import
 
 const String googleMapsApiKey = 'AIzaSyB7VstS4RZlou2jyNgzkKePGqNbs2MyzYY';
-
+const String apiBase = 'https://b23b44ae0c5e.ngrok-free.app';
 // --- COLOR PALETTE ---
 class AppColors {
   static const Color primary = Color.fromARGB(255, 212, 120, 0);
@@ -86,13 +87,17 @@ class AppTextStyles {
 
 class RealHomePage extends StatefulWidget {
   final String customerId;
+  final Map<String, dynamic>? initialLocation;  // 👈 NEW
 
-  const RealHomePage({super.key, required this.customerId});
+  const RealHomePage({
+    super.key, 
+    required this.customerId,
+    this.initialLocation,  // 👈 NEW
+  });
 
   @override
   State<RealHomePage> createState() => _RealHomePageState();
 }
-
 class _RealHomePageState extends State<RealHomePage>
     with TickerProviderStateMixin {
   int _currentIndex = 0;
@@ -122,18 +127,37 @@ class _RealHomePageState extends State<RealHomePage>
   bool _isLocationLoading = true;
   bool _isLocationError = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _initializeAnimations();
-    _checkOldUser();
-    _speech = stt.SpeechToText();
+ @override
+void initState() {
+  super.initState();
+  _initializeAnimations();
+  _checkOldUser();
+  _speech = stt.SpeechToText();
 
-    mongoCustomerId = widget.customerId;
-    _fetchUserProfile();
+  mongoCustomerId = widget.customerId;
+  
+  // Initialize location from passed data
+  if (widget.initialLocation != null) {
+    _initializeFromPassedLocation();
+  } else {
     _loadCachedLocation();
     _getCurrentLocation();
   }
+  
+  _fetchUserProfile();
+}
+void _initializeFromPassedLocation() {
+  final loc = widget.initialLocation!;
+  setState(() {
+    _currentLat = loc['lat'] as double?;
+    _currentLng = loc['lng'] as double?;
+    _currentAddress = loc['address'] as String? ?? 'Current Location';
+    _isLocationLoading = false;
+    _isLocationError = false;
+    _currentLocationDisplay = _formatLocationDisplay(_currentAddress);
+  });
+  debugPrint('✅ Using location from splash: $_currentAddress');
+}
 
   void _initializeAnimations() {
     _fadeController = AnimationController(
@@ -176,40 +200,103 @@ class _RealHomePageState extends State<RealHomePage>
       });
     }
   }
+Future<bool> _hasActiveRide() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final cachedTripId = prefs.getString('active_trip_id');
+    
+    if (cachedTripId != null) {
+      debugPrint('🚫 Active ride detected from cache: $cachedTripId');
+      return true;
+    }
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return false;
+    
+    final token = await user.getIdToken();
+    if (token == null) return false;
+
+    final response = await http.get(
+      Uri.parse('$apiBase/api/trip/active/$mongoCustomerId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+    ).timeout(const Duration(seconds: 3));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      
+      if (data['hasActiveRide'] == true) {
+        debugPrint('✅ Active ride found on server');
+        
+        // Cache it
+        await prefs.setString('active_trip_id', data['trip']['tripId']);
+        
+        // Navigate to driver page
+        _navigateToActiveRide(data);
+        return true;
+      }
+    }
+    
+    return false;
+  } catch (e) {
+    debugPrint('❌ Error checking active ride: $e');
+    return false;
+  }
+}
+void _navigateToActiveRide(Map<String, dynamic> data) {
+  Navigator.pushReplacement(
+    context,
+    MaterialPageRoute(
+      builder: (context) => DriverEnRoutePage(
+        driverDetails: Map<String, dynamic>.from(data['driver']),
+        tripDetails: Map<String, dynamic>.from(data['trip']),
+      ),
+    ),
+  );
+}
 
   Future<void> _loadCachedLocation() async {
-    try {
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-      String? cachedAddress = prefs.getString('cached_pickup_address');
-      double? cachedLat = prefs.getDouble('cached_pickup_lat');
-      double? cachedLng = prefs.getDouble('cached_pickup_lng');
+  try {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    String? cachedAddress = prefs.getString('cached_pickup_address');
+    double? cachedLat = prefs.getDouble('cached_pickup_lat');
+    double? cachedLng = prefs.getDouble('cached_pickup_lng');
 
-      if (cachedAddress != null && cachedLat != null && cachedLng != null) {
-        setState(() {
-          _currentAddress = cachedAddress;
-          _currentLat = cachedLat;
-          _currentLng = cachedLng;
-          _isLocationLoading = false;
-          _currentLocationDisplay = _formatLocationDisplay(cachedAddress);
-        });
-      }
-    } catch (e) {
-      debugPrint('Error loading cached location: $e');
+    if (cachedAddress != null && cachedLat != null && cachedLng != null) {
+      setState(() {
+        _currentAddress = cachedAddress;
+        _currentLat = cachedLat;
+        _currentLng = cachedLng;
+        _isLocationLoading = false;
+        _currentLocationDisplay = _formatLocationDisplay(cachedAddress);
+      });
+      debugPrint('📦 Using cached location: $cachedAddress');  // 👈 ADD THIS
     }
+  } catch (e) {
+    debugPrint('Error loading cached location: $e');
   }
+}
 
-  Future<void> _cacheCurrentLocation() async {
-    try {
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-      await prefs.setString('cached_pickup_address', _currentAddress);
-      if (_currentLat != null) await prefs.setDouble('cached_pickup_lat', _currentLat!);
-      if (_currentLng != null) await prefs.setDouble('cached_pickup_lng', _currentLng!);
-    } catch (e) {
-      debugPrint('Error caching location: $e');
-    }
+Future<void> _cacheCurrentLocation() async {
+  try {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setString('cached_pickup_address', _currentAddress);
+    if (_currentLat != null) await prefs.setDouble('cached_pickup_lat', _currentLat!);
+    if (_currentLng != null) await prefs.setDouble('cached_pickup_lng', _currentLng!);
+    debugPrint('💾 Cached current location');  // 👈 ADD THIS
+  } catch (e) {
+    debugPrint('Error caching location: $e');
   }
+}
 
   Future<void> _getCurrentLocation() async {
+    if (_currentLat != null && _currentLng != null && _currentAddress.isNotEmpty) {
+    debugPrint('⏭️ Skipping location fetch - already have location');
+    return;
+  }
+
     try {
       setState(() {
         _isLocationLoading = true;
@@ -236,20 +323,26 @@ class _RealHomePageState extends State<RealHomePage>
         }
       }
 
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-
+     Position position = await Geolocator.getCurrentPosition(
+  desiredAccuracy: LocationAccuracy.high,
+).timeout(
+  const Duration(seconds: 5),
+  onTimeout: () {
+    throw Exception('Location timeout');
+  },
+);
       setState(() {
         _currentLat = position.latitude;
         _currentLng = position.longitude;
       });
 
-      List<Placemark> placemarks = await placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
-      );
-
+     List<Placemark> placemarks = await placemarkFromCoordinates(
+  position.latitude,
+  position.longitude,
+).timeout(
+  const Duration(seconds: 3),
+  onTimeout: () => [],
+);
       if (placemarks.isNotEmpty) {
         Placemark placemark = placemarks.first;
         String address = '${placemark.street}, ${placemark.locality}, ${placemark.administrativeArea}';
@@ -267,7 +360,9 @@ class _RealHomePageState extends State<RealHomePage>
         _isLocationLoading = false;
         _isLocationError = true;
       });
+      
     }
+      // 👈 ADD THIS
   }
 
   String _formatLocationDisplay(String address) {
@@ -478,61 +573,75 @@ class _RealHomePageState extends State<RealHomePage>
     }
   }
 
-  void _navigateToFares(String dropAddress, {double? dropLat, double? dropLng}) {
-    if (_currentLat == null || _currentLng == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Please wait while we get your location', style: const TextStyle(color: AppColors.onSurface)),
-          backgroundColor: AppColors.warning,
-        ),
-      );
-      return;
-    }
-    
-    if (dropLat != null && dropLng != null) {
-      _saveToHistory(dropAddress, lat: dropLat, lng: dropLng);
-      
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ShortTripPage(
-            args: TripArgs(
-              pickupLat: _currentLat!,
-              pickupLng: _currentLng!,
-              pickupAddress: _currentAddress,
-              dropAddress: dropAddress,
-              dropLat: dropLat,
-              dropLng: dropLng,
-              vehicleType: null,
-              showAllFares: true,
-            ),
-            initialPickup: {
-              'lat': _currentLat!,
-              'lng': _currentLng!,
-              'address': _currentAddress,
-            },
-            initialDrop: {
-              'lat': dropLat,
-              'lng': dropLng,
-              'address': dropAddress,
-            },
-            entryMode: 'search',
-            customerId: mongoCustomerId,
-          ),
-        ),
-      ).then((_) {
-        // ✅ Clear suggestions and search text when coming back
-        setState(() {
-          _suggestions = [];
-          _dropController.clear();
-        });
-        _fetchUserProfile();
-      });
-    } else {
-      _geocodeAndNavigate(dropAddress);
-    }
+ void _navigateToFares(String dropAddress, {double? dropLat, double? dropLng}) async {
+  if (_currentLat == null || _currentLng == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Please wait while we get your location', 
+          style: const TextStyle(color: AppColors.onSurface)),
+        backgroundColor: AppColors.warning,
+      ),
+    );
+    return;
   }
 
+  // ✅ CHECK FOR ACTIVE RIDE FIRST
+  final hasActiveRide = await _hasActiveRide();
+  if (hasActiveRide) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('You already have an active ride. Please complete it first.',
+          style: TextStyle(color: Colors.white)),
+        backgroundColor: Colors.orange,
+        duration: Duration(seconds: 3),
+      ),
+    );
+    return;
+  }
+  
+  // Proceed with navigation...
+  if (dropLat != null && dropLng != null) {
+    _saveToHistory(dropAddress, lat: dropLat, lng: dropLng);
+    
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ShortTripPage(
+          args: TripArgs(
+            pickupLat: _currentLat!,
+            pickupLng: _currentLng!,
+            pickupAddress: _currentAddress,
+            dropAddress: dropAddress,
+            dropLat: dropLat,
+            dropLng: dropLng,
+            vehicleType: null,
+            showAllFares: true,
+          ),
+          initialPickup: {
+            'lat': _currentLat!,
+            'lng': _currentLng!,
+            'address': _currentAddress,
+          },
+          initialDrop: {
+            'lat': dropLat,
+            'lng': dropLng,
+            'address': dropAddress,
+          },
+          entryMode: 'search',
+          customerId: mongoCustomerId,
+        ),
+      ),
+    ).then((_) {
+      setState(() {
+        _suggestions = [];
+        _dropController.clear();
+      });
+      _fetchUserProfile();
+    });
+  } else {
+    _geocodeAndNavigate(dropAddress);
+  }
+}
   Future<void> _geocodeAndNavigate(String address) async {
     try {
       final url = Uri.parse(
@@ -657,16 +766,33 @@ class _RealHomePageState extends State<RealHomePage>
     );
   }
 
- void _navigateToShortTrip(String vehicleType) {
+void _navigateToShortTrip(String vehicleType) async {
   if (_currentLat == null || _currentLng == null) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Please wait while we get your location', style: const TextStyle(color: AppColors.onSurface)),
+        content: Text('Please wait while we get your location', 
+          style: const TextStyle(color: AppColors.onSurface)),
         backgroundColor: AppColors.warning,
       ),
     );
     return;
   }
+
+  // ✅ CHECK FOR ACTIVE RIDE FIRST
+  final hasActiveRide = await _hasActiveRide();
+  if (hasActiveRide) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('You already have an active ride. Please complete it first.',
+          style: TextStyle(color: Colors.white)),
+        backgroundColor: Colors.orange,
+        duration: Duration(seconds: 3),
+      ),
+    );
+    return;
+  }
+
+  // No active ride - proceed to booking
   Navigator.push(
     context,
     MaterialPageRoute(
@@ -676,10 +802,10 @@ class _RealHomePageState extends State<RealHomePage>
           pickupLng: _currentLng!,
           pickupAddress: _currentAddress,
           vehicleType: vehicleType,
-          showAllFares: false,  // ✅ This should be false
+          showAllFares: false,
         ),
         customerId: mongoCustomerId,
-        vehicleType: vehicleType, // ✅ Pass this too
+        vehicleType: vehicleType,
       ),
     ),
   ).then((_) => _fetchUserProfile());

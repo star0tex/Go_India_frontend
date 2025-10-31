@@ -14,6 +14,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../services/socket_service.dart';
 import 'models/trip_args.dart';
 import 'driver_en_route_page.dart';
+import 'manual_pickup_location_page.dart';
 
 const String googleMapsApiKey = 'AIzaSyB7VstS4RZlou2jyNgzkKePGqNbs2MyzYY';
 const String apiBase = 'https://b23b44ae0c5e.ngrok-free.app';
@@ -208,49 +209,82 @@ class _ShortTripPageState extends State<ShortTripPage>
   }
 
   Future<void> _checkForActiveRide() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final cachedTripId = prefs.getString('active_trip_id');
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final cachedTripId = prefs.getString('active_trip_id');
 
-      if (cachedTripId != null) {
-        debugPrint('📦 Found cached trip ID: $cachedTripId');
-      }
-
-      final token = await _getFirebaseToken();
-      if (token == null) return;
-
-      final response = await http.get(
-        Uri.parse('$apiBase/api/trip/active/${widget.customerId}'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-
-        if (data['hasActiveRide'] == true && mounted) {
-          debugPrint('🔄 Restoring active ride from server');
-
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) => DriverEnRoutePage(
-                driverDetails: Map<String, dynamic>.from(data['driver']),
-                tripDetails: Map<String, dynamic>.from(data['trip']),
-              ),
-            ),
-          );
-        } else {
-          _clearActiveTripId();
-        }
-      }
-    } catch (e) {
-      debugPrint('❌ Error checking active ride: $e');
+    if (cachedTripId != null) {
+      debugPrint('📦 Found cached trip ID: $cachedTripId');
     }
-  }
 
+    final token = await _getFirebaseToken();
+    if (token == null) {
+      debugPrint('⚠️ No Firebase token available');
+      return;
+    }
+
+    debugPrint('🔍 Checking active rides for customer: ${widget.customerId}');
+
+    final response = await http.get(
+      Uri.parse('$apiBase/api/trip/active/${widget.customerId}'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+    ).timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        throw Exception('Request timeout');
+      },
+    );
+
+    debugPrint('📡 Active ride check response: ${response.statusCode}');
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+
+      if (data['hasActiveRide'] == true && mounted) {
+        debugPrint('🔄 Restoring active ride from server');
+        debugPrint('👤 Driver: ${data['driver']?['name']}');
+        debugPrint('🚗 Trip ID: ${data['trip']?['tripId']}');
+
+        // ✅ CRITICAL: Block user from booking and redirect immediately
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('You have an active ride. Redirecting...',
+              style: TextStyle(color: Colors.white)),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 2),
+          ),
+        );
+
+        // Save to cache
+        await prefs.setString('active_trip_id', data['trip']['tripId']);
+
+        // Navigate to driver page and remove this page from stack
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => DriverEnRoutePage(
+              driverDetails: Map<String, dynamic>.from(data['driver']),
+              tripDetails: Map<String, dynamic>.from(data['trip']),
+            ),
+          ),
+        );
+      } else {
+        debugPrint('ℹ️ No active ride - user can book');
+        _clearActiveTripId();
+      }
+    } else if (response.statusCode == 404) {
+      debugPrint('ℹ️ No active ride (404)');
+      _clearActiveTripId();
+    } else {
+      debugPrint('⚠️ Unexpected response: ${response.statusCode}');
+    }
+  } catch (e) {
+    debugPrint('❌ Error checking active ride: $e');
+  }
+}
   void _initializeAnimations() {
     _fadeController = AnimationController(
       duration: const Duration(milliseconds: 600),
@@ -304,7 +338,86 @@ class _ShortTripPageState extends State<ShortTripPage>
       }
     });
   }
+Future<void> _showManualPickupConfirmation() async {
+  if (_pickupPoint == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Please wait while we get your location'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+    return;
+  }
 
+  HapticFeedback.mediumImpact();
+
+  // Navigate to manual pickup location page
+  final result = await Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (context) => ManualPickupLocationPage(
+        initialLocation: _pickupPoint!,
+        initialAddress: _pickupAddress,
+      ),
+    ),
+  );
+
+  if (result != null && result is Map<String, dynamic>) {
+    final confirmedLocation = result['location'] as gmaps.LatLng;
+    final confirmedAddress = result['address'] as String;
+
+    setState(() {
+      _pickupPoint = confirmedLocation;
+      _pickupAddress = confirmedAddress;
+      _pickupController.text = confirmedAddress;
+    });
+
+    debugPrint('✅ Pickup location confirmed: $confirmedAddress');
+    debugPrint('📍 Coordinates: ${confirmedLocation.latitude}, ${confirmedLocation.longitude}');
+
+    // Update pickup location data
+    final locationData = await _reverseGeocode(_pickupPoint!);
+    setState(() {
+      _pickupState = locationData['state'] ?? '';
+      _pickupCity = locationData['city'] ?? '';
+    });
+
+    // Refresh nearby drivers with new pickup location
+    await _fetchNearbyDrivers();
+    _updateMarkers();
+
+    // If drop location is already set, redraw route
+    if (_dropPoint != null && _screenIndex == 1) {
+      await _drawRoute();
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: const [
+            Icon(Icons.check_circle, color: AppColors.onPrimary, size: 20),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Pickup location updated!',
+                style: TextStyle(
+                  color: AppColors.onPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: AppColors.success,
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+    );
+  }
+}
   void _setupSocketService() {
     _socketService = SocketService();
     _socketService.connect(apiBase);
@@ -1210,26 +1323,31 @@ class _ShortTripPageState extends State<ShortTripPage>
     _fares.clear();
   });
 
-  // ✅ CRITICAL FIX: Check widget.args.showAllFares instead of widget.vehicleType
-  final bool shouldShowAll = widget.args.showAllFares ?? true;
-  
+  // ✅ FIXED LOGIC: Determine which vehicles to fetch
   List<String> vehiclesToFetch;
   
-  if (shouldShowAll) {
-    // Show all vehicles (from search bar)
-    vehiclesToFetch = vehicleLabels.where((v) => v.isNotEmpty).toList();
-  } else if (widget.vehicleType != null && widget.vehicleType!.isNotEmpty) {
-    // Show only selected vehicle (from vehicle button)
+  // Priority 1: If a specific vehicle was selected from home page
+  if (widget.vehicleType != null && widget.vehicleType!.isNotEmpty) {
     vehiclesToFetch = [widget.vehicleType!];
-  } else if (_selectedVehicle != null) {
-    // Fallback to selected vehicle
-    vehiclesToFetch = [_selectedVehicle!];
-  } else {
-    // Default to all
+    debugPrint('🚗 Single vehicle mode: ${widget.vehicleType}');
+  } 
+  // Priority 2: Check if showAllFares is explicitly set
+  else if (widget.args.showAllFares == true) {
     vehiclesToFetch = vehicleLabels.where((v) => v.isNotEmpty).toList();
+    debugPrint('🚗 Show all vehicles mode: $vehiclesToFetch');
+  }
+  // Priority 3: If _selectedVehicle is already set
+  else if (_selectedVehicle != null && _selectedVehicle!.isNotEmpty) {
+    vehiclesToFetch = [_selectedVehicle!];
+    debugPrint('🚗 Using selected vehicle: $_selectedVehicle');
+  }
+  // Priority 4: Default to all vehicles
+  else {
+    vehiclesToFetch = vehicleLabels.where((v) => v.isNotEmpty).toList();
+    debugPrint('🚗 Default to all vehicles: $vehiclesToFetch');
   }
 
-  debugPrint('🚗 Fetching fares for: $vehiclesToFetch (showAll: $shouldShowAll)');
+  debugPrint('🚕 Fetching fares for: $vehiclesToFetch');
 
   try {
     final results = await Future.wait(
@@ -1258,12 +1376,15 @@ class _ShortTripPageState extends State<ShortTripPage>
           if (response.statusCode == 200) {
             final data = jsonDecode(response.body);
             final total = (data['total'] as num).toDouble();
+            debugPrint('✅ Fare for $vehicleType: ₹$total');
             return MapEntry(vehicleType, total);
           } else {
+            debugPrint('⚠️ Failed to fetch fare for $vehicleType: ${response.statusCode}');
             final defaultFare = _defaultFares[vehicleType] ?? 0.0;
             return MapEntry(vehicleType, defaultFare);
           }
         } catch (e) {
+          debugPrint('❌ Error fetching fare for $vehicleType: $e');
           final defaultFare = _defaultFares[vehicleType] ?? 0.0;
           return MapEntry(vehicleType, defaultFare);
         }
@@ -1274,7 +1395,22 @@ class _ShortTripPageState extends State<ShortTripPage>
       for (var entry in results) {
         _fares[entry.key] = entry.value;
       }
+      
+      // ✅ AUTO-SELECT LOGIC:
+      // If only one vehicle is fetched AND no vehicle is selected yet
+      if (_fares.length == 1 && _selectedVehicle == null) {
+        _selectedVehicle = _fares.keys.first;
+        debugPrint('✅ Auto-selected vehicle: $_selectedVehicle');
+      }
+      // If vehicleType was passed, ensure it's selected
+      else if (widget.vehicleType != null && _fares.containsKey(widget.vehicleType)) {
+        _selectedVehicle = widget.vehicleType;
+        debugPrint('✅ Pre-selected vehicle from widget: $_selectedVehicle');
+      }
     });
+
+    debugPrint('📊 Final fares: $_fares');
+    debugPrint('🎯 Selected vehicle: $_selectedVehicle');
 
     if (_fares.values.every((fare) => fare == 0)) {
       if (mounted) {
@@ -1287,15 +1423,6 @@ class _ShortTripPageState extends State<ShortTripPage>
         );
       }
     }
-
-    // Auto-select the vehicle if only one is fetched
-    if (_fares.length == 1 && _selectedVehicle == null) {
-      setState(() {
-        _selectedVehicle = _fares.keys.first;
-      });
-    }
-    
-    debugPrint('✅ Fetched fares: $_fares');
   } catch (e) {
     debugPrint('❌ Unexpected error in _fetchFares: $e');
 
@@ -1311,171 +1438,210 @@ class _ShortTripPageState extends State<ShortTripPage>
     setState(() => _loadingFares = false);
   }
 }
-
   Future<void> _confirmRide() async {
-    await _clearActiveTripId();
-
-    if (_loadingFares) {
+  // ✅ CHECK ONE MORE TIME before confirming
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final cachedTripId = prefs.getString('active_trip_id');
+    
+    if (cachedTripId != null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Calculating fare, please wait...'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-      return;
-    }
-
-    if (widget.customerId.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Customer ID is missing. Please log in again.')),
-        );
-      }
-      return;
-    }
-
-    if (_pickupPoint == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please select a pickup location.')),
-        );
-      }
-      return;
-    }
-
-    if (_dropPoint == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please select a drop location.')),
-        );
-      }
-      return;
-    }
-
-    if (_selectedVehicle == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please select a vehicle type.')),
-        );
-      }
-      return;
-    }
-
-    final selected = _selectedVehicle!.toLowerCase().trim();
-    final selectedFare = _fares[selected] ?? _defaultFares[selected] ?? 0.0;
-
-    if (selectedFare <= 0) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Unable to calculate fare. Please try again.'),
+            content: Text('You already have an active ride!',
+              style: TextStyle(color: Colors.white)),
             backgroundColor: Colors.red,
-            action: SnackBarAction(
-              label: 'Retry',
-              textColor: Colors.white,
-              onPressed: () async {
-                setState(() => _loadingFares = true);
-                await _fetchFares();
-              },
-            ),
+            duration: Duration(seconds: 2),
           ),
         );
       }
+      
+      // Re-check server
+      await _checkForActiveRide();
       return;
     }
+  } catch (e) {
+    debugPrint('Error checking cached trip: $e');
+  }
 
-    final rideData = {
-      "customerId": widget.customerId,
-      "pickup": {
-        "coordinates": [_pickupPoint!.longitude, _pickupPoint!.latitude],
-        "address": _pickupAddress,
-      },
-      "drop": {
-        "coordinates": [_dropPoint!.longitude, _dropPoint!.latitude],
-        "address": _dropAddress,
-      },
-      "vehicleType": selected,
-      "fare": selectedFare,
-      "timestamp": DateTime.now().toIso8601String(),
-    };
+  // ✅ CLEAR ANY STALE CACHE before creating new trip
+  await _clearActiveTripId();
 
-    try {
-      final response = await http.post(
-        Uri.parse("$apiBase/api/trip/short"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode(rideData),
-      ).timeout(
-        const Duration(seconds: 10),
-        onTimeout: () {
-          throw TimeoutException('Request timed out');
-        },
+  if (_loadingFares) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Calculating fare, please wait...'),
+          backgroundColor: Colors.orange,
+        ),
       );
+    }
+    return;
+  }
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+  if (widget.customerId.isEmpty) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Customer ID is missing. Please log in again.')),
+      );
+    }
+    return;
+  }
 
-        if (data['tripId'] != null) {
-          setState(() {
-            _currentTripId = data['tripId'];
-            _isWaitingForDriver = data['drivers'] > 0;
-          });
+  if (_pickupPoint == null) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a pickup location.')),
+      );
+    }
+    return;
+  }
 
-          if (_isWaitingForDriver) {
-            _rerequestTimer?.cancel();
-            _rerequestTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
-              if (!mounted) {
-                timer.cancel();
-                return;
-              }
-              _socketService.emit('trip:rerequest', {'tripId': _currentTripId});
-            });
-          }
-        }
+  if (_dropPoint == null) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a drop location.')),
+      );
+    }
+    return;
+  }
 
-        await _saveToHistory(_dropAddress);
+  if (_selectedVehicle == null) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a vehicle type.')),
+      );
+    }
+    return;
+  }
 
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(_isWaitingForDriver
-                  ? 'Searching for nearby drivers...'
-                  : 'No drivers available right now.'),
-              backgroundColor: _isWaitingForDriver ? AppColors.success : AppColors.warning,
-            ),
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Ride request failed: ${response.body}'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    } on TimeoutException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Request timed out. Please check your connection.'),
-            backgroundColor: Colors.red,
+  final selected = _selectedVehicle!.toLowerCase().trim();
+  final selectedFare = _fares[selected] ?? _defaultFares[selected] ?? 0.0;
+
+  if (selectedFare <= 0) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Unable to calculate fare. Please try again.'),
+          backgroundColor: Colors.red,
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () async {
+              setState(() => _loadingFares = true);
+              await _fetchFares();
+            },
           ),
-        );
+        ),
+      );
+    }
+    return;
+  }
+
+  final rideData = {
+    "customerId": widget.customerId,
+    "pickup": {
+      "coordinates": [_pickupPoint!.longitude, _pickupPoint!.latitude],
+      "address": _pickupAddress,
+    },
+    "drop": {
+      "coordinates": [_dropPoint!.longitude, _dropPoint!.latitude],
+      "address": _dropAddress,
+    },
+    "vehicleType": selected,
+    "fare": selectedFare,
+    "timestamp": DateTime.now().toIso8601String(),
+  };
+
+  try {
+    debugPrint('📤 Sending ride request...');
+    
+    final response = await http.post(
+      Uri.parse("$apiBase/api/trip/short"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode(rideData),
+    ).timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        throw TimeoutException('Request timed out');
+      },
+    );
+
+    debugPrint('📥 Response status: ${response.statusCode}');
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+
+      if (data['tripId'] != null) {
+        debugPrint('✅ Trip created: ${data['tripId']}');
+        
+        setState(() {
+          _currentTripId = data['tripId'];
+          _isWaitingForDriver = data['drivers'] > 0;
+        });
+
+        // ✅ SAVE TO CACHE IMMEDIATELY
+        await _saveActiveTripId(data['tripId']);
+
+        if (_isWaitingForDriver) {
+          _rerequestTimer?.cancel();
+          _rerequestTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+            if (!mounted) {
+              timer.cancel();
+              return;
+            }
+            _socketService.emit('trip:rerequest', {'tripId': _currentTripId});
+          });
+        }
       }
-    } catch (e) {
+
+      await _saveToHistory(_dropAddress);
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to send ride request: $e'),
+            content: Text(_isWaitingForDriver
+                ? 'Searching for nearby drivers...'
+                : 'No drivers available right now.'),
+            backgroundColor: _isWaitingForDriver ? AppColors.success : AppColors.warning,
+          ),
+        );
+      }
+    } else {
+      debugPrint('❌ Failed to create trip: ${response.statusCode}');
+      debugPrint('Response: ${response.body}');
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Ride request failed: ${response.body}'),
             backgroundColor: Colors.red,
           ),
         );
       }
+    }
+  } on TimeoutException catch (e) {
+    debugPrint('⏱️ Request timeout: $e');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Request timed out. Please check your connection.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  } catch (e) {
+    debugPrint('❌ Error creating trip: $e');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to send ride request: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
+}
 
   @override
   Widget build(BuildContext context) {
@@ -1544,49 +1710,115 @@ class _ShortTripPageState extends State<ShortTripPage>
     );
   }
 
-  Widget _buildEnhancedHeader() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            GestureDetector(
-              onTap: () {
-                HapticFeedback.selectionClick();
-                Navigator.pop(context);
-              },
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.divider),
+Widget _buildEnhancedHeader() {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Row(
+        children: [
+          GestureDetector(
+            onTap: () {
+              HapticFeedback.selectionClick();
+              Navigator.pop(context);
+            },
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.divider),
+              ),
+              child: const Icon(Icons.arrow_back, color: AppColors.onSurface, size: 20),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "Good ${_getTimeGreeting()}!",
+                  style: AppTextStyles.body2,
                 ),
-                child: const Icon(Icons.arrow_back, color: AppColors.onSurface, size: 20),
-              ),
+                const SizedBox(height: 4),
+                Text(
+                  "Where are you going?",
+                  style: AppTextStyles.heading2,
+                ),
+              ],
             ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    "Good ${_getTimeGreeting()}!",
-                    style: AppTextStyles.body2,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    "Where are you going?",
-                    style: AppTextStyles.heading2,
-                  ),
-                ],
-              ),
+          ),
+        ],
+      ),
+      // ✅ NEW: Add Edit Pickup Button
+      if (_pickupPoint != null) ...[
+        const SizedBox(height: 12),
+        GestureDetector(
+          onTap: _showManualPickupConfirmation,
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.primary.withOpacity(0.3)),
             ),
-          ],
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.success.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: AppColors.success.withOpacity(0.3),
+                    ),
+                  ),
+                  child: const Icon(
+                    Icons.edit_location,
+                    color: AppColors.success,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Pickup Location',
+                        style: AppTextStyles.caption.copyWith(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 11,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _pickupAddress.length > 35
+                            ? '${_pickupAddress.substring(0, 35)}...'
+                            : _pickupAddress,
+                        style: AppTextStyles.body2.copyWith(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.arrow_forward_ios,
+                  color: AppColors.primary,
+                  size: 16,
+                ),
+              ],
+            ),
+          ),
         ),
       ],
-    );
-  }
+    ],
+  );
+}
 
   String _getTimeGreeting() {
     final hour = DateTime.now().hour;
@@ -1761,74 +1993,81 @@ class _ShortTripPageState extends State<ShortTripPage>
             ),
           ),
         ),
-        DraggableScrollableSheet(
-          initialChildSize: 0.5,
-          minChildSize: 0.5,
-          maxChildSize: 0.95,
-          builder: (context, scrollController) {
-            return Container(
-              decoration: BoxDecoration(
-                color: AppColors.background,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(32),
-                  topRight: Radius.circular(32),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 30,
-                    offset: const Offset(0, -10),
-                  ),
-                ],
-              ),
-              child: Column(
-                children: [
-                  Container(
-                    margin: const EdgeInsets.only(top: 12),
-                    height: 4,
-                    width: 40,
-                    decoration: BoxDecoration(
-                      color: AppColors.divider,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      controller: scrollController,
-                      padding: const EdgeInsets.only(bottom: 100),
-                      child: _EnhancedFarePanel(
-                        fares: _fares,
-                        loading: _loadingFares,
-                        selectedVehicle: _selectedVehicle,
-                        durationSec: _durationSec,
-                        onVehicleSelected: (vehicle) {
-                          HapticFeedback.selectionClick();
-                          setState(() => _selectedVehicle = vehicle);
-                        },
-                        onConfirmRide: _confirmRide,
-                        showAll: widget.vehicleType == null,
-                        onBack: () {
-                          HapticFeedback.lightImpact();
-                          setState(() => _screenIndex = 0);
-                        },
-                        shimmerAnimation: _shimmerAnimation,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
+     DraggableScrollableSheet(
+  initialChildSize: 0.5,
+  minChildSize: 0.5,
+  maxChildSize: 0.95,
+  builder: (context, scrollController) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(32),
+          topRight: Radius.circular(32),
         ),
-        Positioned(
-          left: 24,
-          right: 24,
-          bottom: 32,
-          child: _EnhancedBookButton(
-            selectedVehicle: _selectedVehicle,
-            onPressed: _selectedVehicle != null ? _confirmRide : null,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 30,
+            offset: const Offset(0, -10),
           ),
-        ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Drag Handle
+          Container(
+            margin: const EdgeInsets.only(top: 12),
+            height: 4,
+            width: 40,
+            decoration: BoxDecoration(
+              color: AppColors.divider,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          // Content
+          Expanded(
+            child: SingleChildScrollView(
+              controller: scrollController,
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.only(bottom: 120), // Increased for button space
+              child: _EnhancedFarePanel(
+  fares: _fares,
+  loading: _loadingFares,
+  selectedVehicle: _selectedVehicle,
+  durationSec: _durationSec,
+  onVehicleSelected: (vehicle) {
+    HapticFeedback.selectionClick();
+    setState(() => _selectedVehicle = vehicle);
+  },
+  onConfirmRide: _confirmRide,
+  showAll: widget.vehicleType == null,
+  onBack: () {
+    HapticFeedback.lightImpact();
+    setState(() => _screenIndex = 0);
+  },
+  shimmerAnimation: _shimmerAnimation,
+  onEditPickup: _showManualPickupConfirmation, // ✅ NEW: Pass the callback
+),
+
+            ),
+          ),
+        ],
+      ),
+    );
+  },
+),
+        Positioned(
+  left: 20, // Reduced from 24
+  right: 20, // Reduced from 24
+  bottom: 24, // Reduced from 32
+  child: SafeArea( // Added SafeArea
+    child: _EnhancedBookButton(
+      selectedVehicle: _selectedVehicle,
+      onPressed: _selectedVehicle != null ? _confirmRide : null,
+    ),
+  ),
+),
       ],
     );
   }
@@ -2327,6 +2566,7 @@ class _EnhancedFarePanel extends StatelessWidget {
   final bool showAll;
   final VoidCallback onBack;
   final Animation<double> shimmerAnimation;
+  final VoidCallback? onEditPickup; // ✅ NEW: Callback for editing pickup
 
   const _EnhancedFarePanel({
     required this.fares,
@@ -2338,95 +2578,155 @@ class _EnhancedFarePanel extends StatelessWidget {
     required this.showAll,
     required this.onBack,
     required this.shimmerAnimation,
+    this.onEditPickup, // ✅ NEW: Optional callback
   });
 
-@override
-Widget build(BuildContext context) {
-  if (loading) {
-    return _buildShimmerLoading();
-  }
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return _buildShimmerLoading();
+    }
 
-  if (fares.isEmpty) {
-    return const SizedBox.shrink();
-  }
+    if (fares.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
-  // ✅ CRITICAL FIX: Only show vehicles that have fares
-  final List<String> vehiclesToShow = fares.keys.toList();
+    final List<String> vehiclesToShow = fares.keys.toList();
 
-  debugPrint('📋 Displaying vehicles: $vehiclesToShow (showAll: $showAll)');
+    debugPrint('📋 Displaying vehicles: $vehiclesToShow (showAll: $showAll)');
 
-  if (vehiclesToShow.isEmpty) {
-    return const SizedBox.shrink();
-  }
+    if (vehiclesToShow.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
-  return Padding(
-    padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            GestureDetector(
-              onTap: onBack,
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.divider),
-                ),
-                child: const Icon(
-                  Icons.arrow_back,
-                  color: AppColors.onSurface,
-                  size: 20,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              GestureDetector(
+                onTap: onBack,
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.divider),
+                  ),
+                  child: const Icon(
+                    Icons.arrow_back,
+                    color: AppColors.onSurface,
+                    size: 20,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    vehiclesToShow.length == 1 
-                        ? "Your ${_capitalize(vehiclesToShow.first)}"
-                        : "Choose your ride",
-                    style: AppTextStyles.heading2,
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      vehiclesToShow.length == 1 
+                          ? "Your ${_capitalize(vehiclesToShow.first)}"
+                          : "Choose your ride",
+                      style: AppTextStyles.heading2,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      vehiclesToShow.length == 1
+                          ? "Best fare for your trip"
+                          : "${vehiclesToShow.length} options available",
+                      style: AppTextStyles.body2,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          
+          // ✅ NEW: Edit Pickup Button (only show if callback is provided)
+          if (onEditPickup != null) ...[
+            const SizedBox(height: 16),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: onEditPickup,
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.divider),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    vehiclesToShow.length == 1
-                        ? "Best fare for your trip"
-                        : "${vehiclesToShow.length} options available",
-                    style: AppTextStyles.body2,
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: AppColors.success.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.edit_location,
+                          color: AppColors.success,
+                          size: 18,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Want to adjust pickup?',
+                              style: AppTextStyles.body2.copyWith(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              'Tap to edit location on map',
+                              style: AppTextStyles.caption.copyWith(fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(
+                        Icons.arrow_forward_ios,
+                        color: AppColors.onSurfaceTertiary,
+                        size: 14,
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ],
-        ),
-        const SizedBox(height: 32),
-        ...vehiclesToShow.map((vehicle) {
-          final fare = fares[vehicle];
-          final isSelected = selectedVehicle == vehicle;
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: _EnhancedFareCard(
-              vehicle: vehicle,
-              fare: fare,
-              selected: isSelected,
-              onTap: () => onVehicleSelected(vehicle),
-              durationSec: durationSec,
-            ),
-          );
-        }).toList(),
-      ],
-    ),
-  );
-}
+          
+          const SizedBox(height: 32),
+          ...vehiclesToShow.map((vehicle) {
+            final fare = fares[vehicle];
+            final isSelected = selectedVehicle == vehicle;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: _EnhancedFareCard(
+                vehicle: vehicle,
+                fare: fare,
+                selected: isSelected,
+                onTap: () => onVehicleSelected(vehicle),
+                durationSec: durationSec,
+              ),
+            );
+          }).toList(),
+        ],
+      ),
+    );
+  }
 
-String _capitalize(String s) =>
-    s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : s;
+  String _capitalize(String s) =>
+      s.isNotEmpty ? s[0].toUpperCase() + s.substring(1) : s;
 
   Widget _buildShimmerLoading() {
     return Padding(
@@ -2467,6 +2767,7 @@ String _capitalize(String s) =>
   }
 }
 
+
 class _EnhancedFareCard extends StatelessWidget {
   final String vehicle;
   final double? fare;
@@ -2497,11 +2798,11 @@ class _EnhancedFareCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(16), // Reduced from 20
           decoration: BoxDecoration(
             color: selected
-                ? AppColors.serviceCardBg // Light cream
-                : AppColors.background, // White
+                ? AppColors.serviceCardBg
+                : AppColors.background,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
               color: selected ? AppColors.primary : AppColors.divider,
@@ -2525,13 +2826,14 @@ class _EnhancedFareCard extends StatelessWidget {
           ),
           child: Row(
             children: [
+              // Vehicle Icon
               Container(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(12), // Reduced from 16
                 decoration: BoxDecoration(
                   color: selected
                       ? AppColors.primary.withOpacity(0.1)
                       : AppColors.surface,
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12), // Reduced from 16
                   border: Border.all(
                     color: selected ? AppColors.primary : AppColors.divider,
                   ),
@@ -2539,39 +2841,46 @@ class _EnhancedFareCard extends StatelessWidget {
                 child: vehicleIcon != null
                     ? Image.asset(
                         vehicleIcon,
-                        height: 32,
-                        width: 32,
+                        height: 28, // Reduced from 32
+                        width: 28,
                         color: selected ? AppColors.primary : null,
                       )
                     : Icon(
                         Icons.directions_car,
                         color: selected ? AppColors.primary : AppColors.onSurface,
-                        size: 32,
+                        size: 28, // Reduced from 32
                       ),
               ),
-              const SizedBox(width: 20),
+              const SizedBox(width: 12), // Reduced from 20
+              // Vehicle Details
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min, // Prevent overflow
                   children: [
                     Row(
                       children: [
-                        Text(
-                          _capitalize(vehicle),
-                          style: AppTextStyles.heading3.copyWith(
-                            color: selected ? AppColors.primary : AppColors.onSurface,
+                        Flexible( // Allow text to wrap if needed
+                          child: Text(
+                            _capitalize(vehicle),
+                            style: AppTextStyles.heading3.copyWith(
+                              color: selected ? AppColors.primary : AppColors.onSurface,
+                              fontSize: 16, // Reduced from default
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
                           ),
                         ),
                         if (vehicle == 'premium') ...[
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6), // Reduced from 8
                           Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
+                              horizontal: 6, // Reduced from 8
                               vertical: 2,
                             ),
                             decoration: BoxDecoration(
                               color: AppColors.warning.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(6), // Reduced from 8
                               border: Border.all(
                                 color: AppColors.warning.withOpacity(0.5),
                               ),
@@ -2581,73 +2890,86 @@ class _EnhancedFareCard extends StatelessWidget {
                               style: AppTextStyles.caption.copyWith(
                                 color: AppColors.warning,
                                 fontWeight: FontWeight.w700,
+                                fontSize: 9, // Reduced from default
                               ),
                             ),
                           ),
                         ],
                       ],
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 4), // Reduced from 6
                     Text(
                       vehicleInfo['description']!,
                       style: AppTextStyles.body2.copyWith(
                         color: selected
                             ? AppColors.primary
                             : AppColors.onSurfaceSecondary,
+                        fontSize: 12, // Reduced from 14
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
                     Row(
                       children: [
                         const Icon(
                           Icons.access_time,
-                          size: 14,
+                          size: 12, // Reduced from 14
                           color: AppColors.onSurfaceTertiary,
                         ),
-                        const SizedBox(width: 4),
+                        const SizedBox(width: 3), // Reduced from 4
                         Text(
                           vehicleInfo['eta']!,
                           style: AppTextStyles.caption.copyWith(
                             color: AppColors.success,
                             fontWeight: FontWeight.w600,
+                            fontSize: 11, // Explicit size
                           ),
                         ),
-                        const SizedBox(width: 16),
+                        const SizedBox(width: 12), // Reduced from 16
                         const Icon(
                           Icons.people,
-                          size: 14,
+                          size: 12, // Reduced from 14
                           color: AppColors.onSurfaceTertiary,
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          vehicleInfo['capacity']!,
-                          style: AppTextStyles.caption,
+                        const SizedBox(width: 3), // Reduced from 4
+                        Flexible( // Prevent overflow
+                          child: Text(
+                            vehicleInfo['capacity']!,
+                            style: AppTextStyles.caption.copyWith(fontSize: 11),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
                         ),
                       ],
                     ),
                   ],
                 ),
               ),
+              const SizedBox(width: 8), // Added spacing
+              // Price Column
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     fare != null ? '₹${fare!.toStringAsFixed(0)}' : '--',
                     style: AppTextStyles.heading3.copyWith(
                       color: selected ? AppColors.primary : AppColors.onSurface,
                       fontWeight: FontWeight.w800,
+                      fontSize: 18, // Reduced from default
                     ),
                   ),
                   const SizedBox(height: 4),
                   if (selected)
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
+                        horizontal: 6, // Reduced from 8
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
                         color: AppColors.success.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(6), // Reduced from 8
                         border: Border.all(
                           color: AppColors.success.withOpacity(0.5),
                         ),
@@ -2657,6 +2979,7 @@ class _EnhancedFareCard extends StatelessWidget {
                         style: AppTextStyles.caption.copyWith(
                           color: AppColors.success,
                           fontWeight: FontWeight.w700,
+                          fontSize: 9, // Reduced
                         ),
                       ),
                     ),
@@ -2729,7 +3052,10 @@ class _EnhancedBookButton extends StatelessWidget {
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
-      height: 60,
+      height: 56, // Reduced from 60
+      constraints: const BoxConstraints(
+        maxWidth: double.infinity, // Ensure it doesn't overflow
+      ),
       child: ElevatedButton(
         onPressed: isEnabled
             ? () {
@@ -2743,38 +3069,47 @@ class _EnhancedBookButton extends StatelessWidget {
           elevation: isEnabled ? 8 : 0,
           shadowColor: isEnabled ? AppColors.primary.withOpacity(0.3) : null,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(30),
+            borderRadius: BorderRadius.circular(28), // Reduced from 30
           ),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 0), // Added explicit padding
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (isEnabled) ...[
-              const Icon(
-                Icons.rocket_launch,
-                color: AppColors.onPrimary,
-                size: 24,
+        child: FittedBox( // Prevents text overflow
+          fit: BoxFit.scaleDown,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min, // Important: prevents overflow
+            children: [
+              if (isEnabled) ...[
+                const Icon(
+                  Icons.rocket_launch,
+                  color: AppColors.onPrimary,
+                  size: 20, // Reduced from 24
+                ),
+                const SizedBox(width: 8), // Reduced from 12
+              ],
+              Flexible( // Allow text to shrink if needed
+                child: Text(
+                  isEnabled
+                      ? 'Book ${_capitalize(selectedVehicle!)} Now'
+                      : 'Select a vehicle',
+                  style: AppTextStyles.button.copyWith(
+                    color: isEnabled ? AppColors.onPrimary : AppColors.onSurfaceTertiary,
+                    fontSize: 16, // Reduced from 18
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                ),
               ),
-              const SizedBox(width: 12),
+              if (isEnabled) ...[
+                const SizedBox(width: 8), // Reduced from 12
+                const Icon(
+                  Icons.arrow_forward,
+                  color: AppColors.onPrimary,
+                  size: 20, // Reduced from 24
+                ),
+              ],
             ],
-            Text(
-              isEnabled
-                  ? 'Book ${_capitalize(selectedVehicle!)} Now'
-                  : 'Select a vehicle',
-              style: AppTextStyles.button.copyWith(
-                color: isEnabled ? AppColors.onPrimary : AppColors.onSurfaceTertiary,
-                fontSize: 18,
-              ),
-            ),
-            if (isEnabled) ...[
-              const SizedBox(width: 12),
-              const Icon(
-                Icons.arrow_forward,
-                color: AppColors.onPrimary,
-                size: 24,
-              ),
-            ],
-          ],
+          ),
         ),
       ),
     );

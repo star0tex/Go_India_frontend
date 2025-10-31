@@ -190,43 +190,42 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
   }
 
   void _setupSocketListeners() {
-    SocketService().on('driver:locationUpdate', (data) {
-      if (!mounted) return;
-      debugPrint('📍 Driver location update: $data');
+SocketService().on('driver:locationUpdate', (data) {
+  if (!mounted) return;
+  debugPrint('📍 Driver location update: $data');
 
-      final lat = data['latitude'];
-      final lng = data['longitude'];
-      if (lat is num && lng is num) {
-        setState(() {
-          _previousDriverPosition = _driverPosition;
-          _driverPosition = LatLng(lat.toDouble(), lng.toDouble());
-          
-          if (_previousDriverPosition != null) {
-            _currentBearing = _calculateBearing(
-              _previousDriverPosition!.latitude,
-              _previousDriverPosition!.longitude,
-              _driverPosition.latitude,
-              _driverPosition.longitude,
-            );
-          }
-          
-          _updateMarkers();
-          _updateDriverDistance();
-        });
-        
-        _drawPolyline();
-        
-        // Smooth camera follow
-        if (_initialBoundsFit) {
-          _controller.future.then((controller) {
-            controller.animateCamera(
-              CameraUpdate.newLatLng(_driverPosition),
-            );
-          });
-        }
+  final lat = data['latitude'];
+  final lng = data['longitude'];
+  if (lat is num && lng is num) {
+    setState(() {
+      _previousDriverPosition = _driverPosition;
+      _driverPosition = LatLng(lat.toDouble(), lng.toDouble());
+      
+      if (_previousDriverPosition != null) {
+        _currentBearing = _calculateBearing(
+          _previousDriverPosition!.latitude,
+          _previousDriverPosition!.longitude,
+          _driverPosition.latitude,
+          _driverPosition.longitude,
+        );
       }
+      
+      _updateMarkers();
+      _updateDriverDistance();
     });
-
+    
+    _drawPolyline();
+    
+    // ✅ SMOOTH CAMERA FOLLOW - Only move camera slightly, don't re-zoom
+    if (_initialBoundsFit) {
+      _controller.future.then((controller) {
+        controller.animateCamera(
+          CameraUpdate.newLatLng(_driverPosition),
+        );
+      });
+    }
+  }
+});
     SocketService().on('trip:accepted', (data) {
       if (!mounted) return;
       debugPrint('🔔 Received trip:accepted event with data: $data');
@@ -240,38 +239,44 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
       }
     });
 
-    SocketService().on('trip:cancelled', (data) {
-      if (!mounted) return;
-      
-      debugPrint('🚫 Trip cancelled: $data');
-      
-      final cancelledBy = data['cancelledBy'] ?? 'unknown';
-      final message = cancelledBy == 'customer' 
-          ? 'Customer cancelled the trip'
-          : 'Trip has been cancelled';
-      
-      SharedPreferences.getInstance().then((prefs) {
-        prefs.remove('active_trip_id');
-        debugPrint('🗑️ Cleared cached trip ID');
-      });
-      
+SocketService().on('trip:cancelled', (data) {
+  if (!mounted) return;
+  
+  debugPrint('🚫 Trip cancelled: $data');
+  
+  final cancelledBy = data['cancelledBy'] ?? 'unknown';
+  final message = cancelledBy == 'customer' 
+      ? 'Customer cancelled the trip'
+      : 'Trip has been cancelled';
+  
+  // ✅ CLEAR CACHE IMMEDIATELY
+  SharedPreferences.getInstance().then((prefs) {
+    prefs.remove('active_trip_id');
+    debugPrint('🗑️ Cleared cached trip ID');
+  });
+  
+  // ✅ UPDATE STATE to allow going back
+  setState(() {
+    rideStatus = 'cancelled';
+  });
+  
+  if (mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: const TextStyle(color: AppColors.onPrimary)),
+        backgroundColor: AppColors.warning,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+    
+    // ✅ NAVIGATE BACK TO HOME after showing message
+    Future.delayed(const Duration(seconds: 2), () {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(message, style: const TextStyle(color: AppColors.onPrimary)),
-            backgroundColor: AppColors.warning,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-        
-        Future.delayed(const Duration(seconds: 1), () {
-          if (mounted) {
-            Navigator.of(context).popUntil((route) => route.isFirst);
-          }
-        });
+        Navigator.of(context).popUntil((route) => route.isFirst);
       }
     });
-
+  }
+});
     // ✅ ENHANCED: Ride started with visual transition
     SocketService().on('trip:ride_started', (data) {
       if (!mounted) return;
@@ -332,39 +337,42 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
       _showCompletionDialog();
     });
 
-    SocketService().on('trip:cash_collected', (data) async {
-      if (!mounted) return;
-      
-      debugPrint('💰 Payment confirmed - clearing state');
-      
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.remove('active_trip_id');
-        debugPrint('🗑️ Cleared cached trip ID');
-      } catch (e) {
-        debugPrint('❌ Error clearing trip ID: $e');
-      }
-      
-      if (Navigator.canPop(context)) {
-        Navigator.pop(context);
-      }
-      Navigator.of(context).popUntil((route) => route.isFirst);
-      
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(data['message'] ?? 'Payment confirmed. Thank you!',
-                style: const TextStyle(color: AppColors.onPrimary)),
-              backgroundColor: AppColors.success,
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
-      });
-    });
+SocketService().on('trip:cash_collected', (data) async {
+  if (!mounted) return;
+  
+  debugPrint('💰 Payment confirmed - clearing state');
+  
+  // ✅ MARK AS COMPLETED
+  setState(() {
+    rideStatus = 'completed';
+  });
+  
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('active_trip_id');
+    debugPrint('🗑️ Cleared cached trip ID');
+  } catch (e) {
+    debugPrint('❌ Error clearing trip ID: $e');
   }
-
+  
+  if (Navigator.canPop(context)) {
+    Navigator.pop(context);
+  }
+  Navigator.of(context).popUntil((route) => route.isFirst);
+  
+  Future.delayed(const Duration(milliseconds: 300), () {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(data['message'] ?? 'Payment confirmed. Thank you!',
+            style: const TextStyle(color: AppColors.onPrimary)),
+          backgroundColor: AppColors.success,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  });
+});}
   void _showCompletionDialog() {
     showDialog(
       context: context,
@@ -477,168 +485,223 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
   }
 
   void _onMapCreated(GoogleMapController controller) {
-    _controller.complete(controller);
-    
-    // Auto-fit bounds after map creation
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted) {
-        _moveCameraToFitBounds();
+  _controller.complete(controller);
+  
+  // Set map style for better visibility
+  controller.setMapStyle('''
+    [
+      {
+        "featureType": "poi",
+        "elementType": "labels",
+        "stylers": [{"visibility": "off"}]
+      },
+      {
+        "featureType": "transit",
+        "elementType": "labels",
+        "stylers": [{"visibility": "off"}]
       }
-    });
-  }
-
-  // ✅ AUTO-ZOOM to fit both markers (driver and pickup/destination)
-  Future<void> _moveCameraToFitBounds() async {
-    try {
-      final GoogleMapController controller = await _controller.future;
-      
-      LatLng target = rideStatus == 'ride_started' ? _dropPosition : _pickupPosition;
-      
-      // Calculate bounds
-      double minLat = min(_driverPosition.latitude, target.latitude);
-      double maxLat = max(_driverPosition.latitude, target.latitude);
-      double minLng = min(_driverPosition.longitude, target.longitude);
-      double maxLng = max(_driverPosition.longitude, target.longitude);
-      
-      // Add padding (15% extra space)
-      double latDiff = maxLat - minLat;
-      double lngDiff = maxLng - minLng;
-      double latPadding = latDiff * 0.15;
-      double lngPadding = lngDiff * 0.15;
-      
-      // Minimum padding if markers are very close
-      if (latPadding < 0.005) latPadding = 0.005;
-      if (lngPadding < 0.005) lngPadding = 0.005;
-      
-      LatLngBounds bounds = LatLngBounds(
-        southwest: LatLng(minLat - latPadding, minLng - lngPadding),
-        northeast: LatLng(maxLat + latPadding, maxLng + lngPadding),
-      );
-      
-      controller.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
-      
-      _initialBoundsFit = true;
-      debugPrint('✅ Camera fitted to bounds - Showing route to ${rideStatus == 'ride_started' ? 'destination' : 'pickup'}');
-    } catch (e) {
-      debugPrint('❌ Error fitting bounds: $e');
+    ]
+  ''');
+  
+  // Initial zoom after map loads
+  Future.delayed(const Duration(milliseconds: 300), () {
+    if (mounted) {
+      _moveCameraToFitBounds();
     }
-  }
+  });
+}
 
+// ✅ REPLACE _moveCameraToFitBounds method with BETTER ZOOM LOGIC
+Future<void> _moveCameraToFitBounds() async {
+  try {
+    final GoogleMapController controller = await _controller.future;
+    
+    LatLng target = rideStatus == 'ride_started' ? _dropPosition : _pickupPosition;
+    
+    // Calculate distance between driver and target
+    double distance = _calculateDistance(
+      _driverPosition.latitude,
+      _driverPosition.longitude,
+      target.latitude,
+      target.longitude,
+    ) / 1000; // Convert to km
+    
+    debugPrint('📏 Distance: ${distance.toStringAsFixed(2)} km');
+    
+    // ✅ SMART ZOOM: Close zoom for short distances, wider for long distances
+    double zoom;
+    if (distance < 0.5) {
+      zoom = 17.0; // Very close - less than 500m
+    } else if (distance < 1.0) {
+      zoom = 16.0; // Close - less than 1km
+    } else if (distance < 2.0) {
+      zoom = 15.0; // Medium - less than 2km
+    } else if (distance < 5.0) {
+      zoom = 14.0; // Far - less than 5km
+    } else {
+      zoom = 13.0; // Very far
+    }
+    
+    // Calculate center point between driver and target
+    double centerLat = (_driverPosition.latitude + target.latitude) / 2;
+    double centerLng = (_driverPosition.longitude + target.longitude) / 2;
+    
+    // ✅ SMOOTH ANIMATED ZOOM to center point
+    await controller.animateCamera(
+      CameraUpdate.newCameraPosition(
+        CameraPosition(
+          target: LatLng(centerLat, centerLng),
+          zoom: zoom,
+          tilt: 0, // Top-down view like Uber
+          bearing: 0, // North-up orientation
+        ),
+      ),
+    );
+    
+    _initialBoundsFit = true;
+    debugPrint('✅ Camera zoomed to level $zoom - Route centered');
+  } catch (e) {
+    debugPrint('❌ Error fitting bounds: $e');
+  }
+}
   Future<void> _fetchDriverLocation() async {
     // Socket updates handled in _setupSocketListeners
   }
 
   Future<void> _drawPolyline() async {
-    _polylines.clear();
+  _polylines.clear();
 
-    LatLng destination;
-    String routeId;
-    Color routeColor;
-    String routeLabel;
+  LatLng destination;
+  String routeId;
+  Color routeColor;
+  String routeLabel;
 
-    if (rideStatus == 'driver_coming') {
-      destination = _pickupPosition;
-      routeId = 'driver_to_pickup';
-      routeColor = AppColors.primary;
-      routeLabel = 'Route to pickup';
-    } else {
-      destination = _dropPosition;
-      routeId = 'driver_to_drop';
-      routeColor = AppColors.success;
-      routeLabel = 'Route to destination';
-    }
+  if (rideStatus == 'driver_coming') {
+    destination = _pickupPosition;
+    routeId = 'driver_to_pickup';
+    routeColor = const Color(0xFF4285F4); // Bright Google Blue
+    routeLabel = 'Route to pickup';
+  } else {
+    destination = _dropPosition;
+    routeId = 'driver_to_drop';
+    routeColor = const Color(0xFF34A853); // Bright Google Green
+    routeLabel = 'Route to destination';
+  }
 
-    debugPrint('🔄 Fetching $routeLabel from Directions API...');
-    debugPrint('   From: Driver (${_driverPosition.latitude}, ${_driverPosition.longitude})');
-    debugPrint('   To: ${rideStatus == 'driver_coming' ? 'Pickup' : 'Drop'} (${destination.latitude}, ${destination.longitude})');
+  debugPrint('🔄 Fetching $routeLabel from Directions API...');
 
-    try {
-      final uri = Uri.parse(
-        'https://maps.googleapis.com/maps/api/directions/json'
-        '?origin=${_driverPosition.latitude},${_driverPosition.longitude}'
-        '&destination=${destination.latitude},${destination.longitude}'
-        '&mode=driving'
-        '&key=$googleMapsApiKey'
-      );
+  try {
+    final uri = Uri.parse(
+      'https://maps.googleapis.com/maps/api/directions/json'
+      '?origin=${_driverPosition.latitude},${_driverPosition.longitude}'
+      '&destination=${destination.latitude},${destination.longitude}'
+      '&mode=driving'
+      '&key=$googleMapsApiKey'
+    );
+    
+    final response = await http.get(uri).timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        throw TimeoutException('Request timeout');
+      },
+    );
+    
+    if (response.statusCode == 200) {
+      final Map<String, dynamic> data = json.decode(response.body);
       
-      final response = await http.get(uri).timeout(
-        const Duration(seconds: 10),
-        onTimeout: () {
-          debugPrint('⏱️ Directions API timeout');
-          throw TimeoutException('Request timeout');
-        },
-      );
-      
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> data = json.decode(response.body);
+      if (data['status'] == 'OK' && 
+          data['routes'] != null && 
+          (data['routes'] as List).isNotEmpty) {
         
-        if (data['status'] == 'OK' && data['routes'] != null && (data['routes'] as List).isNotEmpty) {
-          final route = data['routes'][0];
-          final polylinePoints = route['overview_polyline']['points'] as String;
-          final List<LatLng> routeCoordinates = _decodePolyline(polylinePoints);
+        final route = data['routes'][0];
+        final polylinePoints = route['overview_polyline']['points'] as String;
+        final List<LatLng> routeCoordinates = _decodePolyline(polylinePoints);
+        
+        if (routeCoordinates.isNotEmpty) {
+          debugPrint('✅ Route decoded: ${routeCoordinates.length} points');
           
-          if (routeCoordinates.isNotEmpty) {
-            debugPrint('✅ Route decoded: ${routeCoordinates.length} points');
+          setState(() {
+            // ✅ ADD BACKGROUND POLYLINE (border effect)
+            _polylines.add(
+              Polyline(
+                polylineId: PolylineId('${routeId}_border'),
+                color: Colors.white,
+                width: 10, // Wider white border
+                points: routeCoordinates,
+                geodesic: true,
+                startCap: Cap.roundCap,
+                endCap: Cap.roundCap,
+                jointType: JointType.round,
+                zIndex: 1,
+              ),
+            );
+            
+            // ✅ MAIN ROUTE POLYLINE (thicker and brighter)
+            _polylines.add(
+              Polyline(
+                polylineId: PolylineId(routeId),
+                color: routeColor,
+                width: 7, // Increased from 6
+                points: routeCoordinates,
+                geodesic: true,
+                startCap: Cap.roundCap,
+                endCap: Cap.roundCap,
+                jointType: JointType.round,
+                zIndex: 2,
+              ),
+            );
+          });
+          
+          if (route['legs'] != null && (route['legs'] as List).isNotEmpty) {
+            final leg = route['legs'][0];
+            final distanceMeters = leg['distance']['value'] as num;
+            final durationSeconds = leg['duration']['value'] as num;
             
             setState(() {
-              _polylines.add(
-                Polyline(
-                  polylineId: PolylineId(routeId),
-                  color: routeColor,
-                  width: 6,
-                  points: routeCoordinates,
-                  geodesic: true,
-                  startCap: Cap.roundCap,
-                  endCap: Cap.roundCap,
-                  jointType: JointType.round,
-                ),
-              );
+              _driverDistance = distanceMeters / 1000;
+              _estimatedMinutes = (durationSeconds / 60).round();
+              if (_estimatedMinutes! < 1) _estimatedMinutes = 1;
             });
             
-            if (route['legs'] != null && (route['legs'] as List).isNotEmpty) {
-              final leg = route['legs'][0];
-              final distanceMeters = leg['distance']['value'] as num;
-              final durationSeconds = leg['duration']['value'] as num;
-              
-              setState(() {
-                _driverDistance = distanceMeters / 1000;
-                _estimatedMinutes = (durationSeconds / 60).round();
-                if (_estimatedMinutes! < 1) _estimatedMinutes = 1;
-              });
-              
-              debugPrint('   ✅ Distance: ${_driverDistance!.toStringAsFixed(2)} km');
-              debugPrint('   ✅ Duration: $_estimatedMinutes min');
-              debugPrint('   ✅ Route color: ${rideStatus == 'driver_coming' ? 'Orange (to pickup)' : 'Green (to destination)'}');
-            }
-            
-            return;
+            debugPrint('   ✅ Distance: ${_driverDistance!.toStringAsFixed(2)} km');
+            debugPrint('   ✅ Duration: $_estimatedMinutes min');
           }
+          
+          // ✅ ZOOM TO FIT ROUTE after drawing
+          Future.delayed(const Duration(milliseconds: 500), () {
+            if (mounted && !_initialBoundsFit) {
+              _moveCameraToFitBounds();
+            }
+          });
+          
+          return;
         }
       }
-    } catch (e) {
-      debugPrint('❌ Error fetching route: $e');
     }
-
-    // Fallback to straight line
-    debugPrint('⚠️ Using fallback straight line');
-    setState(() {
-      _polylines.add(
-        Polyline(
-          polylineId: PolylineId(routeId),
-          color: routeColor,
-          width: 5,
-          points: [_driverPosition, destination],
-          geodesic: true,
-          patterns: [
-            PatternItem.dash(20),
-            PatternItem.gap(10),
-          ],
-        ),
-      );
-    });
-
-    _updateDriverDistance();
+  } catch (e) {
+    debugPrint('❌ Error fetching route: $e');
   }
+
+  // Fallback to straight line
+  debugPrint('⚠️ Using fallback straight line');
+  setState(() {
+    _polylines.add(
+      Polyline(
+        polylineId: PolylineId(routeId),
+        color: routeColor,
+        width: 6,
+        points: [_driverPosition, destination],
+        geodesic: true,
+        patterns: [
+          PatternItem.dash(30),
+          PatternItem.gap(15),
+        ],
+      ),
+    );
+  });
+
+  _updateDriverDistance();
+}
 
   List<LatLng> _decodePolyline(String encoded) {
     List<LatLng> polyline = [];
@@ -729,86 +792,429 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
     );
   }
 
-  void _cancelRide() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
+ // Add this method to replace the existing _cancelRide() method in driver_en_route_page.dart
+
+void _cancelRide() {
+  String? selectedReason;
+  final TextEditingController otherReasonController = TextEditingController();
+
+  final List<String> cancellationReasons = [
+    'Driver is taking too long',
+    'Found alternative transport',
+    'Plans changed',
+    'Wrong pickup location',
+    'Price too high',
+    'Driver not responding',
+    'Other',
+  ];
+
+  showDialog(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
         backgroundColor: AppColors.background,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text('Cancel Ride?', style: AppTextStyles.heading3),
-        content: Text(
-          'Are you sure you want to cancel this ride?',
-          style: AppTextStyles.body1,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        contentPadding: EdgeInsets.zero,
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header with icon
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: AppColors.error.withOpacity(0.1),
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(24),
+                    topRight: Radius.circular(24),
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.error.withOpacity(0.2),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.cancel_outlined,
+                        color: AppColors.error,
+                        size: 40,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Cancel Ride?',
+                      style: AppTextStyles.heading2.copyWith(fontSize: 22),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Please tell us why you want to cancel',
+                      style: AppTextStyles.body2,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+              
+              // Cancellation reasons list
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Select a reason:',
+                      style: AppTextStyles.body1.copyWith(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    
+                    // Reasons list
+                    ...cancellationReasons.map((reason) {
+                      final isSelected = selectedReason == reason;
+                      return GestureDetector(
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          setState(() {
+                            selectedReason = reason;
+                          });
+                        },
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isSelected
+                                ? AppColors.error.withOpacity(0.1)
+                                : AppColors.surface,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: isSelected
+                                  ? AppColors.error
+                                  : AppColors.divider,
+                              width: isSelected ? 2 : 1,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                isSelected
+                                    ? Icons.radio_button_checked
+                                    : Icons.radio_button_unchecked,
+                                color: isSelected
+                                    ? AppColors.error
+                                    : AppColors.onSurfaceSecondary,
+                                size: 22,
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  reason,
+                                  style: AppTextStyles.body1.copyWith(
+                                    fontSize: 15,
+                                    fontWeight: isSelected
+                                        ? FontWeight.w600
+                                        : FontWeight.w500,
+                                    color: isSelected
+                                        ? AppColors.error
+                                        : AppColors.onSurface,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                    
+                    // Other reason text field
+                    if (selectedReason == 'Other') ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: otherReasonController,
+                        maxLines: 3,
+                        maxLength: 150,
+                        decoration: InputDecoration(
+                          hintText: 'Please specify your reason...',
+                          hintStyle: AppTextStyles.body2,
+                          filled: true,
+                          fillColor: AppColors.surface,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: AppColors.divider),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: AppColors.error,
+                              width: 2,
+                            ),
+                          ),
+                          contentPadding: const EdgeInsets.all(14),
+                        ),
+                        style: AppTextStyles.body1,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'No',
-              style: AppTextStyles.body1.copyWith(color: AppColors.onSurfaceSecondary),
-            ),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(context);
-
-              try {
-                final prefs = await SharedPreferences.getInstance();
-                final customerId = prefs.getString('customerId') ?? '';
-                final tripId = widget.tripDetails['tripId']?.toString();
-                
-                if (tripId != null && customerId.isNotEmpty) {
-                  final response = await http.post(
-                    Uri.parse('$apiBase/api/trip/cancel'),
-                    headers: {'Content-Type': 'application/json'},
-                    body: jsonEncode({
-                      'tripId': tripId,
-                      'cancelledBy': customerId,
-                    }),
-                  );
-                  
-                  if (response.statusCode == 200) {
-                    debugPrint('✅ Trip cancelled successfully');
-                    
-                    await prefs.remove('active_trip_id');
-                    
-                    Navigator.of(context).popUntil((route) => route.isFirst);
-                    
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Ride cancelled successfully',
-                          style: TextStyle(color: AppColors.onPrimary)),
-                        backgroundColor: AppColors.success,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () {
+                      otherReasonController.dispose();
+                      Navigator.pop(context);
+                    },
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      side: BorderSide(color: AppColors.divider, width: 1.5),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                    );
-                  } else {
-                    debugPrint('❌ Failed to cancel trip: ${response.statusCode}');
-                    throw Exception('Failed to cancel trip');
-                  }
-                }
-              } catch (e) {
-                debugPrint('❌ Error cancelling trip: $e');
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Failed to cancel trip: $e'),
-                    backgroundColor: AppColors.error,
+                    ),
+                    child: Text(
+                      'Keep Ride',
+                      style: AppTextStyles.button.copyWith(
+                        color: AppColors.onSurface,
+                        fontSize: 15,
+                      ),
+                    ),
                   ),
-                );
-              }
-            },
-            child: Text(
-              'Yes, Cancel',
-              style: AppTextStyles.button.copyWith(color: AppColors.error),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: selectedReason == null
+                        ? null
+                        : () async {
+                            // Validate "Other" reason
+                            if (selectedReason == 'Other' &&
+                                otherReasonController.text.trim().isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Please specify your reason',
+                                    style: TextStyle(color: AppColors.onPrimary),
+                                  ),
+                                  backgroundColor: AppColors.warning,
+                                ),
+                              );
+                              return;
+                            }
+
+                            final finalReason = selectedReason == 'Other'
+                                ? otherReasonController.text.trim()
+                                : selectedReason!;
+
+                            otherReasonController.dispose();
+                            Navigator.pop(context);
+
+                            // Show loading
+                            showDialog(
+                              context: context,
+                              barrierDismissible: false,
+                              builder: (_) => Dialog(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(24),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const CircularProgressIndicator(
+                                        valueColor: AlwaysStoppedAnimation<Color>(
+                                          AppColors.primary,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        'Cancelling ride...',
+                                        style: AppTextStyles.body1,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+
+                            try {
+                              final prefs = await SharedPreferences.getInstance();
+                              final customerId = prefs.getString('customerId') ?? '';
+                              final tripId = widget.tripDetails['tripId']?.toString();
+
+                              if (tripId != null && customerId.isNotEmpty) {
+                                final response = await http.post(
+                                  Uri.parse('$apiBase/api/trip/cancel'),
+                                  headers: {'Content-Type': 'application/json'},
+                                  body: jsonEncode({
+                                    'tripId': tripId,
+                                    'cancelledBy': customerId,
+                                    'reason': finalReason, // 🔥 Send cancellation reason
+                                  }),
+                                );
+
+                                if (mounted) Navigator.pop(context); // Close loading
+
+                                if (response.statusCode == 200) {
+                                  debugPrint('✅ Trip cancelled: $finalReason');
+
+                                  await prefs.remove('active_trip_id');
+
+                                  Navigator.of(context).popUntil(
+                                    (route) => route.isFirst,
+                                  );
+
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Row(
+                                        children: [
+                                          const Icon(
+                                            Icons.check_circle,
+                                            color: AppColors.onPrimary,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Text(
+                                              'Ride cancelled successfully',
+                                              style: TextStyle(
+                                                color: AppColors.onPrimary,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      backgroundColor: AppColors.success,
+                                      behavior: SnackBarBehavior.floating,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                  );
+                                } else {
+                                  debugPrint(
+                                    '❌ Failed to cancel: ${response.statusCode}',
+                                  );
+                                  throw Exception('Failed to cancel trip');
+                                }
+                              }
+                            } catch (e) {
+                              if (mounted) Navigator.pop(context); // Close loading
+                              
+                              debugPrint('❌ Error cancelling trip: $e');
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Failed to cancel trip: $e'),
+                                  backgroundColor: AppColors.error,
+                                ),
+                              );
+                            }
+                          },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.error,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      elevation: 0,
+                      disabledBackgroundColor: AppColors.divider,
+                    ),
+                    child: Text(
+                      'Cancel Ride',
+                      style: AppTextStyles.button.copyWith(fontSize: 15),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+} void _showCannotGoBackDialog() {
+  showDialog(
+    context: context,
+    barrierDismissible: true,
+    builder: (context) => AlertDialog(
+      backgroundColor: AppColors.background,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: Row(
+        children: [
+          const Icon(Icons.info_outline, color: AppColors.warning, size: 28),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text('Ride in Progress', style: AppTextStyles.heading3),
+          ),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'You cannot go back while a ride is active.',
+            style: AppTextStyles.body1,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Please wait for the ride to complete or contact the driver if you need to cancel.',
+            style: AppTextStyles.body2,
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(
+            'Got it',
+            style: AppTextStyles.button.copyWith(color: AppColors.primary),
+          ),
+        ),
+        if (rideStatus == 'driver_coming')
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _cancelRide();
+            },
+            child: Text(
+              'Cancel Ride',
+              style: AppTextStyles.button.copyWith(color: AppColors.error),
+            ),
+          ),
+      ],
+    ),
+  );
+}
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
+@override
+Widget build(BuildContext context) {
+  return WillPopScope(
+    onWillPop: () async {
+      // ✅ PREVENT GOING BACK unless ride is completed or cancelled
+      if (rideStatus == 'completed' || rideStatus == 'cancelled') {
+        return true; // Allow going back
+      }
+      
+      // Show dialog explaining they can't go back
+      _showCannotGoBackDialog();
+      return false; // Prevent going back
+    },
+    child: Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
         title: Text(
@@ -819,8 +1225,15 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
         foregroundColor: AppColors.onSurface,
         elevation: 0,
         systemOverlayStyle: SystemUiOverlayStyle.dark,
+        // ✅ HIDE back button if ride is active
+        automaticallyImplyLeading: false,
+        leading: (rideStatus == 'completed' || rideStatus == 'cancelled') 
+          ? IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => Navigator.pop(context),
+            )
+          : null,
       ),
-      // ✅ COLUMN LAYOUT - Map on Top, Card on Bottom
       body: Column(
         children: [
           // ✅ TOP SECTION: Map (55% of screen)
@@ -828,27 +1241,36 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
             flex: 55,
             child: Stack(
               children: [
-                GoogleMap(
-                  onMapCreated: _onMapCreated,
-                  initialCameraPosition: CameraPosition(
-                    target: _driverPosition,
-                    zoom: 14,
-                  ),
-                  markers: _markers,
-                  polylines: _polylines,
-                  myLocationButtonEnabled: false,
-                  myLocationEnabled: true,
-                  compassEnabled: false,
-                  mapToolbarEnabled: false,
-                  zoomControlsEnabled: false,
-                  rotateGesturesEnabled: false,
-                  scrollGesturesEnabled: true,
-                  tiltGesturesEnabled: false,
-                  zoomGesturesEnabled: true,
-                  buildingsEnabled: true,
-                  trafficEnabled: false,
-                ),
-                
+GoogleMap(
+  onMapCreated: _onMapCreated,
+  initialCameraPosition: CameraPosition(
+    target: _driverPosition,
+    zoom: 15, // Start with closer zoom
+    tilt: 0, // Top-down view
+    bearing: 0, // North-up
+  ),
+  markers: _markers,
+  polylines: _polylines,
+  myLocationButtonEnabled: false,
+  myLocationEnabled: true,
+  compassEnabled: true, // ✅ Enable compass
+  mapToolbarEnabled: false,
+  zoomControlsEnabled: false,
+  rotateGesturesEnabled: false, // Keep map north-up
+  scrollGesturesEnabled: true,
+  tiltGesturesEnabled: false, // Disable tilt for 2D view
+  zoomGesturesEnabled: true,
+  buildingsEnabled: false, // ✅ Disable 3D buildings for clearer view
+  trafficEnabled: false,
+  // ✅ CRITICAL: Set min/max zoom levels
+  minMaxZoomPreference: const MinMaxZoomPreference(12.0, 20.0),
+  padding: const EdgeInsets.only(
+    top: 20,
+    bottom: 20,
+    left: 20,
+    right: 20,
+  ),
+),
                 // ✅ Recenter button
                 Positioned(
                   top: 16,
@@ -891,7 +1313,7 @@ class _DriverEnRoutePageState extends State<DriverEnRoutePage> {
           ),
         ],
       ),
-    );
+    ));
   }
 
   Widget _buildDriverCard() {
